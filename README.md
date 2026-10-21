@@ -34,8 +34,11 @@ Erkannt werden:
 - Akkorde
 - Ganze, halbe, Viertel- und Achtelpausen
 - Taktstriche
-- Klaviersysteme: zwei durch eine Linie verbundene Systeme werden gleichzeitig gespielt
-  und an den Taktstrichen synchronisiert
+- Systeme aus mehreren Notenzeilen (z. B. Gesang + Klavier), die links durch eine Linie
+  verbunden sind: Noten, die übereinander stehen, erklingen gleichzeitig. Leichte perspektivische
+  Verschiebungen zwischen den Zeilen werden über die Taktstriche ausgeglichen.
+- Noten ober- und unterhalb der Notenlinien nur mit Hilfslinien. Dadurch werden Buchstaben im
+  Liedtext oder Punkte in Akkorddiagrammen nicht als Noten gelesen.
 
 **Nicht** unterstützt werden u. a.:
 
@@ -87,8 +90,10 @@ Ablauf der Erkennung (`Omr.recognize`):
 5. Entfernen der Notenlinien und Hilfslinien
 6. Volle Notenköpfe per Erosion, leere Notenköpfe (Halbe/Ganze) über ihr eingeschlossenes Loch
 7. Hälse, Balken bzw. Fähnchen, Punkte, Vorzeichen, Pausen, Taktstriche, Schlüssel, Tonart
-8. Tonhöhen und Zeitpunkte (480 Ticks pro Viertel); die Systeme eines Klaviersystems
-   werden an den Taktstrichen synchronisiert
+8. Tonhöhen und Zeitpunkte (480 Ticks pro Viertel): Alle Zeichen eines Systems werden nach
+   ihrer waagrechten Position zu Spalten gruppiert. Eine Spalte beginnt, sobald in jeder ihrer
+   Notenzeilen die vorige Spalte abgelaufen ist. Eine übersehene Note verschiebt so nicht den
+   ganzen Rest des Stücks.
 
 ## Bauen
 

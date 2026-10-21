@@ -15,6 +15,8 @@ import kotlin.math.roundToInt
  * time signatures, tuplets, ties, multiple voices per staff, repeats or lyrics.
  */
 object Omr {
+    /** Debug aid: "x0,y0,x1,y1" in OMR_DEBUG_REGION prints why holes in that region were rejected. */
+    private val DEBUG_REGION = System.getenv("OMR_DEBUG_REGION")?.split(",")?.map { it.trim().toInt() }
 
     private class Head(val cx: Double, val cy: Double, var box: Box, val hollow: Boolean) {
         var staff = -1
@@ -73,7 +75,8 @@ object Omr {
             h.comp = compOfHead(comps, aggressive, h, d)
             findStem(aggressive, h, d)
         }
-        heads.removeAll { it.staff < 0 }
+        // notes beyond the staff need ledger lines; lyrics and chord diagrams have none
+        heads.removeAll { it.staff < 0 || !ledgersOk(bin, staves[it.staff], it, d, m.lineThickness) }
 
         // --- per staff: header (clef, key, time signature) -------------------------------
         // staff line removal can cut symbols into pieces; overlapping pieces are merged into glyphs
@@ -187,47 +190,67 @@ object Omr {
             assignPitches(items[si], staves[si], clefs[si], keys[si])
         }
 
-        // --- timing: staves of a system run in parallel, synchronized at barlines -----------
+        // --- timing --------------------------------------------------------------------------
+        // Notes printed above each other sound together. Items of all staves of a system are
+        // grouped into columns by x; a column starts when the previous column of each of its
+        // staves has ended (the latest such time wins, so a missed note only causes a local error).
         val events = ArrayList<MusicEvent>()
         val systems = ArrayList<SystemInfo>()
         var t = 0
         val systemCount = (systemOf.maxOrNull() ?: -1) + 1
         for (sys in 0 until systemCount) {
             val members = staves.indices.filter { systemOf[it] == sys }
-            val maxMeasure = members.maxOf { si -> items[si].maxOfOrNull { it.measure } ?: 0 }
-            val measureLen = IntArray(maxMeasure + 1)
-            for (k in 0..maxMeasure) {
-                var len = 0
-                var hasFull = false
-                for (si in members) {
-                    val inM = items[si].filter { it.measure == k }
-                    if (inM.any { it.fullMeasureRest }) hasFull = true
-                    len = max(len, inM.filter { !it.fullMeasureRest }.sumOf { it.duration })
+            // in photos the staves of a system can be shifted against each other (perspective);
+            // barlines run straight through the system, so they map each staff onto the first one
+            val ref = members.first()
+            val anchors = members.associateWith { si -> alignmentAnchors(staves[si], barlines[si], staves[ref], barlines[ref], d) }
+            fun refX(si: Int, x: Double) = mapPiecewise(anchors.getValue(si), x)
+            val timed = members.flatMap { si -> items[si].filter { !it.fullMeasureRest }.map { si to it } }
+                .sortedBy { refX(it.first, it.second.box.centerX.toDouble()) }
+            val columns = ArrayList<MutableList<Pair<Int, Item>>>()
+            var colX = Double.NEGATIVE_INFINITY
+            for (e in timed) {
+                val x = refX(e.first, e.second.box.centerX.toDouble())
+                if (columns.isEmpty() || x - colX > 0.8 * d) {
+                    columns += ArrayList<Pair<Int, Item>>()
+                    colX = x
                 }
-                if (len == 0 && hasFull) len = 4 * Score.TPQ
-                measureLen[k] = len
+                columns.last() += e
             }
-            val measureStart = IntArray(maxMeasure + 2)
-            for (k in 0..maxMeasure) measureStart[k + 1] = measureStart[k] + measureLen[k]
-            for (si in members) {
-                val offset = IntArray(maxMeasure + 1)
-                for (it in items[si]) {
-                    val dur = if (it.fullMeasureRest) max(Score.TPQ, measureLen[it.measure]) else it.duration
-                    events += MusicEvent(
-                        startTick = t + measureStart[it.measure] + offset[it.measure],
-                        durationTicks = dur,
-                        pitches = it.pitches,
-                        box = it.box,
-                        staffIndex = si,
-                        systemIndex = sys,
-                        measureIndex = it.measure,
-                    )
-                    offset[it.measure] += dur
+            val colTime = IntArray(columns.size)
+            val lastCol = HashMap<Int, Int>() // staff -> index of its previous column
+            for ((c, col) in columns.withIndex()) {
+                var time = -1
+                for (si in col.map { it.first }.distinct()) {
+                    val pc = lastCol[si] ?: continue
+                    val shortest = columns[pc].filter { it.first == si }.minOf { it.second.duration }
+                    time = max(time, colTime[pc] + shortest)
                 }
+                if (time < 0) {
+                    time = if (c == 0) t else colTime[c - 1] + columns[c - 1].minOf { it.second.duration }
+                }
+                if (c > 0) time = max(time, colTime[c - 1])
+                colTime[c] = time
+                for (si in col.map { it.first }.distinct()) lastCol[si] = c
+                for ((si, it) in col) {
+                    events += MusicEvent(time, it.duration, it.pitches, it.box, si, sys, it.measure)
+                }
+            }
+            // whole-measure rests sit in the middle of their measure: they start with the
+            // first column after the preceding barline
+            for (si in members) for (it in items[si].filter { r -> r.fullMeasureRest }) {
+                val barX = barlines[si].lastOrNull { b -> b < it.x } ?: staves[si].left.toDouble()
+                val c = columns.indexOfFirst { col -> refX(col.first().first, col.first().second.box.centerX.toDouble()) > refX(si, barX) }
+                val start = when {
+                    c >= 0 -> colTime[c]
+                    columns.isNotEmpty() -> colTime.last() + columns.last().minOf { e -> e.second.duration }
+                    else -> t
+                }
+                events += MusicEvent(start, it.duration, emptyList(), it.box, si, sys, it.measure)
             }
             var sysBox = staves[members.first()].box()
             for (si in members) sysBox = sysBox.union(staves[si].box())
-            val end = t + measureStart[maxMeasure + 1]
+            val end = events.filter { it.systemIndex == sys }.maxOfOrNull { it.endTick } ?: t
             systems += SystemInfo(sys, sysBox, t, end)
             t = end
         }
@@ -237,6 +260,30 @@ object Omr {
         val score = Score(Score.TPQ, events, staffInfos, systems)
         if (score.noteCount == 0) warnings += "Es wurden Notenlinien, aber keine Noten erkannt."
         return RecognitionResult(gray, score, d, skew, warnings)
+    }
+
+    /** Pairs (x in this staff, x in the reference staff): staff starts, matching barlines, staff ends. */
+    private fun alignmentAnchors(s: Staff, bars: List<Double>, r: Staff, refBars: List<Double>, d: Double): List<Pair<Double, Double>> {
+        val out = arrayListOf(s.left.toDouble() to r.left.toDouble())
+        for (b in bars) {
+            val shiftSoFar = out.last().second - out.last().first
+            val match = refBars.minByOrNull { abs(it - (b + shiftSoFar)) } ?: continue
+            if (abs(match - (b + shiftSoFar)) <= 2 * d && match > out.last().second && b > out.last().first) out += b to match
+        }
+        if (s.right > out.last().first && r.right > out.last().second) out += s.right.toDouble() to r.right.toDouble()
+        return out
+    }
+
+    private fun mapPiecewise(anchors: List<Pair<Double, Double>>, x: Double): Double {
+        if (anchors.size == 1) return x - anchors[0].first + anchors[0].second
+        var i = anchors.indexOfFirst { it.first >= x }
+        i = when {
+            i <= 0 -> 1
+            else -> i
+        }
+        val (a, b) = anchors[i - 1] to anchors[i]
+        if (b.first == a.first) return x - a.first + a.second
+        return a.second + (x - a.first) * (b.second - a.second) / (b.first - a.first)
     }
 
     private fun empty(gray: GrayImage, d: Double, skew: Double, msg: String) =
@@ -361,26 +408,36 @@ object Omr {
                 if (open) continue
                 val hw = hx1 - hx0 + 1
                 val hh = hy1 - hy0 + 1
+                val dbg = DEBUG_REGION?.let { r -> hx0 >= r[0] && hx1 <= r[2] && hy0 >= r[1] && hy1 <= r[3] } == true
+                fun reject(why: String): Boolean {
+                    if (dbg) println("DBG hole $hx0..$hx1 x $hy0..$hy1 rejected: $why")
+                    return true
+                }
                 if (hw > maxHole || hh > maxHole) continue
-                if (hw < 0.2 * d || hw > 1.3 * d || hh < 0.15 * d || hh > 0.95 * d) continue
+                if ((hw < 0.2 * d || hw > 1.3 * d || hh < 0.15 * d || hh > 0.95 * d) && reject("size ${hw / d} ${hh / d}")) continue
                 // note head holes are elliptic; rectangular holes are gaps between stems and lines
-                if (area < 0.35 * hw * hh || area > 0.88 * hw * hh || area > maxPixels) continue
-                if (straightSide(pixels, area, w, hy0, hh)) continue
+                if ((area < 0.35 * hw * hh || area > 0.88 * hw * hh || area > maxPixels) && reject("fill")) continue
+                if (straightSide(pixels, area, w, hy0, hh) && reject("straight")) continue
                 val cx = (hx0 + hx1) / 2
                 val cy = (hy0 + hy1) / 2
                 val limit = (0.7 * d).roundToInt()
-                val left = edge(cons, cx, cy, -1, 0, limit) ?: continue
-                val right = edge(cons, cx, cy, 1, 0, limit) ?: continue
-                val top = edge(cons, cx, cy, 0, -1, limit) ?: continue
-                val bottom = edge(cons, cx, cy, 0, 1, limit) ?: continue
+                val left = edge(cons, cx, cy, -1, 0, limit)
+                val right = edge(cons, cx, cy, 1, 0, limit)
+                val top = edge(cons, cx, cy, 0, -1, limit)
+                val bottom = edge(cons, cx, cy, 0, 1, limit)
+                if ((left == null || right == null || top == null || bottom == null) && reject("ring $left $right $top $bottom")) continue
+                left!!; right!!; top!!; bottom!!
                 val ow = right - left + 1
                 val oh = bottom - top + 1
-                if (ow < 1.0 * d || ow > 2.4 * d || oh < 0.6 * d || oh > 1.5 * d) continue
-                // sharps, naturals and flats also enclose small holes: their vertical strokes
-                // reach far up on the left or far down on the right, which note stems never do
+                if ((ow < 1.0 * d || ow > 2.4 * d || oh < 0.6 * d || oh > 1.5 * d) && reject("outer ${ow / d} ${oh / d}")) continue
+                // sharps and naturals also enclose small holes: they have long vertical strokes on
+                // both sides; a note has at most one (its stem, which in a chord passes the other heads)
                 val leftRun = verticalExtent(agg, left + 1, cy, d)
                 val rightRun = verticalExtent(agg, right - 1, cy, d)
-                if (leftRun.first < cy - 1.2 * d || rightRun.second > cy + 1.2 * d) continue
+                val longLeft = leftRun.second - leftRun.first > 1.8 * d
+                val longRight = rightRun.second - rightRun.first > 1.8 * d
+                if (longLeft && longRight && reject("accidental")) continue
+                if (dbg) println("DBG hole $hx0..$hx1 x $hy0..$hy1 accepted")
                 val box = Box(left.toFloat(), top.toFloat(), right.toFloat(), bottom.toFloat())
                 out += Head(box.centerX.toDouble(), box.centerY.toDouble(), box, hollow = true)
             }
@@ -445,6 +502,21 @@ object Omr {
             if (next < 0) return yy
             yy = next
         }
+    }
+
+    private fun ledgersOk(bin: BinaryImage, s: Staff, h: Head, d: Double, t: Int): Boolean {
+        val step = s.stepAt(h.cx, h.cy)
+        val k = when {
+            step >= 10 -> 10
+            step <= -2 -> -2
+            else -> return true
+        }
+        val y = (s.bottom(h.cx) - k * s.space(h.cx) / 2).roundToInt()
+        val tol = t + 1
+        // the ledger line sticks out on both sides of the head
+        fun inkNear(x: Int) = (-tol..tol).any { bin[x, y + it] }
+        val out = max(1, (0.12 * d).roundToInt())
+        return inkNear(h.box.left.roundToInt() - out) && inkNear(h.box.right.roundToInt() + out)
     }
 
     private fun dedupe(heads: MutableList<Head>, d: Double) {
@@ -624,7 +696,7 @@ object Omr {
                 if (c.x0 >= clefComp.x0 - 0.3 * d && c.x1 <= clefComp.x1 + 0.3 * d) used[c.id] = true
             }
             for (c in own) {
-                if (c.x0 > cursor && c.x0 < cursor + 0.8 * d && max(c.width, c.height) < 0.5 * d) {
+                if (c.x0 > cursor && c.x0 < cursor + 0.8 * d && max(c.width, c.height) < 0.65 * d) {
                     cursor = max(cursor, c.x1.toDouble()); used[c.id] = true
                 }
             }
@@ -635,7 +707,7 @@ object Omr {
         var flats = 0
         for (c in own.filter { it.x0 >= cursor - 1 }) {
             if (c.x0 >= cursor + 1.6 * d) break
-            if (max(c.width, c.height) < 0.6 * d) continue // specks, bass clef dots
+            if (max(c.width, c.height) < 0.6 * d) { cursor = max(cursor, c.x1.toDouble()); continue } // specks, clef dots
             if (!accidentalLike(c, d)) break
             if (classifyAccidental(img, c) < 0) flats++ else sharps++
             cursor = c.x1.toDouble()
