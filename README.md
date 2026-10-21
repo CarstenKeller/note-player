@@ -20,7 +20,9 @@ sich gerade befindet.
   - Grenzen: Markierungen, die in jedem Bild über den Noten liegen (z. B. die Rahmen von
     „Erkannte Noten umrahmen“ in einer Aufnahme dieser App), verdecken die Noten dauerhaft.
     Zoomen während der Aufnahme wird nicht unterstützt. Die Noten müssen groß genug sein
-    (Linienabstand mindestens etwa 8 Pixel).
+    (Linienabstand mindestens etwa 8 Pixel). Gedacht ist das für Bildschirmaufnahmen; ein mit
+    der Kamera abgefilmter Bildschirm (bewegtes, schräges, unscharfes Bild) wird nicht
+    unterstützt.
 - **Notenerkennung direkt auf dem Gerät**: offline, kein Server, kein Konto.
 - **Wiedergabe** mit wählbarem Klang: Flügel (Aufnahmen eines echten Klaviers, Standard),
   E-Piano, Orgel, Harfe. Das Stück wird vor dem Abspielen einmal in eine Audiodatei

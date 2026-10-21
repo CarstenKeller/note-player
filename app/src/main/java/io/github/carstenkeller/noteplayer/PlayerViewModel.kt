@@ -111,7 +111,17 @@ class PlayerViewModel(app: Application) : AndroidViewModel(app) {
                         ImageLoader.loadGray(getApplication(), uri)
                     }
                     val result = Omr.recognize(gray, maxSideFor(gray.width, gray.height))
-                    ScreenState.Ready(ImageLoader.toBitmap(result.page), result)
+                    if (video && result.score.staves.isEmpty()) {
+                        ScreenState.Failed(
+                            "Im Video wurden keine Notenlinien gefunden. Am besten geht eine " +
+                                "Bildschirmaufnahme des Geräts, auf dem die Noten laufen. Ein mit " +
+                                "der Kamera abgefilmter Bildschirm wird nicht unterstützt: Das Bild " +
+                                "darf sich nur durch das Scrollen der Noten ändern, und die Noten " +
+                                "müssen groß sein (Abstand der Notenlinien mindestens etwa 8 Pixel)."
+                        )
+                    } else {
+                        ScreenState.Ready(ImageLoader.toBitmap(result.page), result)
+                    }
                 }
             } catch (e: CancellationException) {
                 throw e
