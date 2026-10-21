@@ -99,8 +99,12 @@ Voraussetzungen: JDK 17 und das Android SDK (z. B. über Android Studio).
 ./gradlew :app:assembleDebug    # APK: app/build/outputs/apk/debug/app-debug.apk
 ```
 
-Bei jedem Push baut GitHub Actions die Debug-APK (`.github/workflows/android.yml`). Sie steht
-im jeweiligen Workflow-Lauf unter „Artifacts“ als `notenspieler-debug-apk` zum Download.
-Zum Installieren auf dem Handy muss „Installation aus unbekannten Quellen“ erlaubt sein.
+Bei jedem Push baut GitHub Actions die APK (`.github/workflows/android.yml`) und
+veröffentlicht sie als Release `build-<Nummer>` mit eindeutigem Dateinamen
+`notenspieler-0.1.<Nummer>-<Commit>.apk`. Die neueste Version steht unter
+[Releases](https://github.com/CarstenKeller/note-player/releases). Zum Installieren auf dem
+Handy muss „Installation aus unbekannten Quellen“ erlaubt sein. Alle Builds sind mit demselben
+Schlüssel (`app/debug.keystore`, öffentlicher Debug-Schlüssel – nicht für den Play Store)
+signiert, daher lässt sich jede neue Version direkt über die alte installieren.
 
 Mindestversion: Android 8.0 (API 26).
