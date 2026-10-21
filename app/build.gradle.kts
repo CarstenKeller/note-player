@@ -47,6 +47,11 @@ android {
     buildFeatures {
         compose = true
     }
+
+    androidResources {
+        // the piano samples are read with openFd(), which needs them uncompressed
+        noCompress += "ogg"
+    }
 }
 
 dependencies {

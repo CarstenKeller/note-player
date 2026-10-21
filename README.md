@@ -8,7 +8,9 @@ während des Abspielens anzeigt, wo man sich gerade befindet.
 - **Notenblatt fotografieren** (Kamera-App des Geräts) oder **Bild auswählen** (Galerie / Dateien).
   Bilder können auch über „Teilen“ aus einer anderen App an den Notenspieler geschickt werden.
 - **Notenerkennung direkt auf dem Gerät**: offline, kein Server, kein Konto.
-- **Wiedergabe** über den eingebauten MIDI-Synthesizer von Android (Klavierklang).
+- **Wiedergabe** mit wählbarem Klang: Flügel (Aufnahmen eines echten Klaviers, Standard),
+  E-Piano, Orgel, Harfe. Das Stück wird vor dem Abspielen einmal in eine Audiodatei
+  umgerechnet (kurz „Klang lädt …“).
   Das Tempo wird in Prozent eingestellt (25–200 %). Tempoangaben auf dem Blatt werden nicht
   gelesen; 100 % entsprechen 120 Vierteln pro Minute, dem üblichen Standard von Notensatzprogrammen.
 - **Gesangsstimme**: Eine Notenzeile mit Liedtext darunter, zu der es eine Begleitung gibt
@@ -120,3 +122,10 @@ Schlüssel (`app/debug.keystore`, öffentlicher Debug-Schlüssel – nicht für 
 signiert, daher lässt sich jede neue Version direkt über die alte installieren.
 
 Mindestversion: Android 8.0 (API 26).
+
+## Lizenzen
+
+Die Klavier-Samples in `app/src/main/assets/piano` stammen aus dem npm-Paket
+`tonejs-instrument-piano-ogg` 1.1.0 (https://github.com/Makefully-Studios/tonejs-instruments)
+und stehen unter **CC BY 3.0**. Sie wurden ausgewählt, gekürzt und neu kodiert; Details in
+`app/src/main/assets/piano/QUELLE.txt`.

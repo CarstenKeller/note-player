@@ -88,7 +88,9 @@ object Omr {
         val headerEnd = DoubleArray(staves.size)
         for ((si, staff) in staves.withIndex()) {
             val own = headerGlyphs.filter { headerStaff[it.id] == si }.sortedBy { it.x0 }
-            val header = readHeader(aggressive, staff, own, d, headerUsed)
+            // half/whole notes and notes with a stem are never part of the clef/key/time signature
+            val notes = heads.filter { it.staff == si && (it.hollow || it.stemDir != 0) }.map { it.box }
+            val header = readHeader(aggressive, staff, own, notes, d, headerUsed)
             clefs[si] = header.first
             keys[si] = header.second
             headerEnd[si] = header.third
@@ -269,26 +271,19 @@ object Omr {
 
         // a staff with lyrics below it is a vocal line; it can be left out when other staves
         // of its system carry the accompaniment
+        // Only the top staff of a system with three or more staves (voice + piano) can be a vocal
+        // line. Leaving out an accompaniment staff by mistake is worse than playing the voice, so
+        // the rule is deliberately strict.
+        val systemSize = IntArray(staves.size) { si -> staves.indices.count { systemOf[it] == systemOf[si] } }
+        val isTop = BooleanArray(staves.size) { si -> si == 0 || systemOf[si - 1] != systemOf[si] }
         val vocal = BooleanArray(staves.size) { si ->
-            val s = staves[si]
-            // lyrics: letter-sized glyphs between this staff and the next one below
-            val next = staves.getOrNull(si + 1)
-            headerGlyphs.count { g ->
-                val below = g.cy - s.bottom(g.cx)
-                val limit = if (next != null && systemOf[si + 1] == systemOf[si]) next.top(g.cx) - s.bottom(g.cx) - 1.0 * d else 4 * d
-                g.cx > s.left && g.cx < s.right && below > 0.8 * d && below < min(4 * d, limit) &&
-                    g.height >= 0.35 * d && g.height <= 1.6 * d && g.width <= 1.6 * d
-            } >= 6
+            isTop[si] && systemSize[si] >= 3 && hasLyrics(staves[si], staves[si + 1], headerGlyphs, consumed, d)
         }
-        // systems with the same layout (e.g. voice + piano) have the voice at the same position;
-        // a line with little text (or only rests) gets the role the majority of such systems have
-        val layouts = staves.indices.groupBy { si -> staves.indices.count { systemOf[it] == systemOf[si] } }
-        for ((size, list) in layouts) {
-            if (size < 2) continue
-            for (pos in 0 until size) {
-                val atPos = list.filter { si -> si - staves.indices.first { systemOf[it] == systemOf[si] } == pos }
-                if (atPos.any { vocal[it] } && atPos.count { vocal[it] } * 2 >= atPos.size) for (si in atPos) vocal[si] = true
-            }
+        // systems with the same layout: if the voice was recognized in at least one of them, the
+        // top staff is the voice in all of them (lines with little text, or only rests)
+        if (vocal.any { it }) {
+            val sizes = staves.indices.filter { vocal[it] }.map { systemSize[it] }.toSet()
+            for (si in staves.indices) if (isTop[si] && systemSize[si] in sizes) vocal[si] = true
         }
         val accompanied = BooleanArray(staves.size) { si -> vocal[si] && staves.indices.any { o -> systemOf[o] == systemOf[si] && !vocal[o] } }
         val (events, systems) = timing { true }
@@ -302,6 +297,29 @@ object Omr {
     }
 
     /** Pairs (x in this staff, x in the reference staff): staff starts, matching barlines, staff ends. */
+    /**
+     * Lyrics: at least six letter-sized glyphs on a common baseline in the gap below the staff.
+     * Note heads and other parts of notes do not count.
+     */
+    private fun hasLyrics(s: Staff, next: Staff, glyphs: List<Component>, noteParts: Set<Int>, d: Double): Boolean {
+        val letters = glyphs.filter { g ->
+            val below = g.cy - s.bottom(g.cx)
+            val gap = next.top(g.cx) - s.bottom(g.cx)
+            g.cx > s.left && g.cx < s.right && below > 0.8 * d && below < gap - 1.0 * d &&
+                g.height >= 0.35 * d && g.height <= 1.6 * d && g.width <= 1.6 * d &&
+                g.members.none { it in noteParts }
+        }
+        if (letters.size < 6) return false
+        val bottoms = letters.map { it.y1 }.sorted()
+        var best = 0
+        var j = 0
+        for (i in bottoms.indices) {
+            while (bottoms[i] - bottoms[j] > 0.3 * d) j++
+            best = max(best, i - j + 1)
+        }
+        return best >= 6
+    }
+
     private fun alignmentAnchors(s: Staff, bars: List<Double>, r: Staff, refBars: List<Double>, d: Double): List<Pair<Double, Double>> {
         val out = arrayListOf(s.left.toDouble() to r.left.toDouble())
         for (b in bars) {
@@ -382,9 +400,12 @@ object Omr {
         val out = ArrayList<Head>()
         for (c in comps.list) {
             if (c.width < 0.3 * d || c.height < 0.2 * d) continue
+            // what is left of a head is roughly elliptic; beams leave long thin strips
+            if (c.height < 0.3 * d || c.width > 3.2 * c.height) continue
             val w = c.width + 2 * r
             val h = c.height + 2 * r
             if (w < 0.8 * d || w > 2.1 * d || h < 0.6 * d || h > 6 * d) continue
+            if (partOfBeam(img, c, r, d)) continue
             val x0 = (c.x0 - r).toFloat()
             val x1 = (c.x1 + r).toFloat()
             val y0 = c.y0 - r
@@ -396,6 +417,27 @@ object Omr {
             }
         }
         return out
+    }
+
+    /**
+     * A thick piece of a beam (or of two beams merged by blur) survives the erosion like a note
+     * head. Unlike a head, the ink continues sideways: on both sides, or far on one side.
+     */
+    private fun partOfBeam(img: BinaryImage, core: Component, r: Int, d: Double): Boolean {
+        var left = 0
+        var right = 0
+        val limit = (r + 2.5 * d).toInt()
+        for (y in core.y0..core.y1) {
+            var l = 0
+            while (l < limit && img[core.x0 - 1 - l, y]) l++
+            var rr = 0
+            while (rr < limit && img[core.x1 + 1 + rr, y]) rr++
+            left = max(left, l)
+            right = max(right, rr)
+        }
+        val side = r + 0.6 * d
+        val far = r + 1.8 * d
+        return (left >= side && right >= side) || left >= far || right >= far
     }
 
     /** Finds half/whole heads by the hole enclosed by their ring in [cons]. */
@@ -715,7 +757,8 @@ object Omr {
     }
 
     /** Returns clef, key (fifths) and the x coordinate where the music starts. */
-    private fun readHeader(img: BinaryImage, staff: Staff, own: List<Component>, d: Double, used: BooleanArray): Triple<Clef, Int, Double> {
+    private fun readHeader(img: BinaryImage, staff: Staff, own: List<Component>, notes: List<Box>, d: Double, used: BooleanArray): Triple<Clef, Int, Double> {
+        fun holdsNote(c: Component) = notes.any { it.centerX >= c.x0 && it.centerX <= c.x1 && it.centerY >= c.y0 && it.centerY <= c.y1 }
         val left = staff.left
         var cursor = left + 0.5 * d
         var clef = Clef.TREBLE
@@ -765,7 +808,7 @@ object Omr {
         for (c in own.filter { it.x0 >= cursor - 1 }) {
             if (c.x0 >= cursor + 1.6 * d) break
             if (max(c.width, c.height) < 0.6 * d) { cursor = max(cursor, c.x1.toDouble()); continue } // specks, clef dots
-            if (!accidentalLike(c, d)) break
+            if (!accidentalLike(c, d) || holdsNote(c)) break
             if (classifyAccidental(img, c) < 0) flats++ else sharps++
             cursor = c.x1.toDouble()
             used[c.id] = true
@@ -776,7 +819,7 @@ object Omr {
         // time signature: stacked digits (or a single "C")
         val mid = staff.lineY(2, cursor)
         val digits = own.filter {
-            it.x0 >= cursor - 1 && it.x0 < cursor + 2.0 * d &&
+            !holdsNote(it) && it.x0 >= cursor - 1 && it.x0 < cursor + 2.0 * d &&
                 it.height >= 1.3 * d && it.height <= 2.7 * d && it.width >= 0.6 * d && it.width <= 2.2 * d
         }
         val hasUpper = digits.any { it.cy < mid }
@@ -787,7 +830,7 @@ object Omr {
         } else {
             // both digits merged into one glyph
             val stacked = own.firstOrNull {
-                it.x0 >= cursor - 1 && it.x0 < cursor + 2.0 * d && it.height >= 3.2 * d && it.height <= 4.8 * d &&
+                !holdsNote(it) && it.x0 >= cursor - 1 && it.x0 < cursor + 2.0 * d && it.height >= 3.2 * d && it.height <= 4.8 * d &&
                     it.width >= 0.8 * d && it.width <= 2.4 * d && abs(it.cy - mid) < 0.6 * d &&
                     balanced(img, it) // a note with its stem has nearly all ink in one half
             }
@@ -795,8 +838,12 @@ object Omr {
                 cursor = max(cursor, stacked.x1.toDouble()); used[stacked.id] = true
             } else {
                 // digits broken into pieces: pieces stacked at the same x that together span the staff
+                // the digits stay within the staff (notes, e.g. chords at the start of a line, do not)
+                val top0 = staff.top(cursor)
+                val bottom0 = staff.bottom(cursor)
                 val pieces = own.filter {
-                    it.x0 >= cursor - 1 && it.x0 < cursor + 2.0 * d && it.height <= 2.7 * d && max(it.width, it.height) >= 0.4 * d
+                    !holdsNote(it) && it.x0 >= cursor - 1 && it.x0 < cursor + 2.0 * d && it.height <= 2.7 * d &&
+                        max(it.width, it.height) >= 0.4 * d && it.y0 >= top0 - 0.4 * d && it.y1 <= bottom0 + 0.4 * d
                 }
                 val first = pieces.minByOrNull { it.x0 }
                 if (first != null) {

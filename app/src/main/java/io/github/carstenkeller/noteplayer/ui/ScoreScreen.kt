@@ -6,6 +6,7 @@ import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.gestures.detectTransformGestures
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -16,6 +17,8 @@ import androidx.compose.foundation.layout.safeDrawingPadding
 import androidx.compose.foundation.layout.width
 import androidx.compose.material3.Button
 import androidx.compose.material3.Checkbox
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Slider
@@ -46,6 +49,7 @@ import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
 import io.github.carstenkeller.noteplayer.PlaybackState
+import io.github.carstenkeller.noteplayer.audio.Instrument
 import io.github.carstenkeller.noteplayer.ScreenState
 import io.github.carstenkeller.noteplayer.omr.MusicEvent
 import io.github.carstenkeller.noteplayer.omr.Score
@@ -70,6 +74,7 @@ fun ScoreScreen(
     onStop: () -> Unit,
     onTempo: (Int) -> Unit,
     onIncludeVocals: (Boolean) -> Unit,
+    onInstrument: (Instrument) -> Unit,
     onSeek: (MusicEvent) -> Unit,
     onBack: () -> Unit,
 ) {
@@ -100,7 +105,7 @@ fun ScoreScreen(
                     Text(position, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.primary)
                 }
             }
-            for (w in state.result.warnings) {
+            for (w in state.result.warnings + listOfNotNull(playback.error)) {
                 Text(w, color = MaterialTheme.colorScheme.error, modifier = Modifier.padding(horizontal = 16.dp))
             }
 
@@ -126,6 +131,7 @@ fun ScoreScreen(
                 onStop = onStop,
                 onTempo = onTempo,
                 onIncludeVocals = onIncludeVocals,
+                onInstrument = onInstrument,
             )
         }
     }
@@ -278,14 +284,33 @@ private fun Controls(
     onStop: () -> Unit,
     onTempo: (Int) -> Unit,
     onIncludeVocals: (Boolean) -> Unit,
+    onInstrument: (Instrument) -> Unit,
 ) {
     var tempo by remember(playback.tempoPercent) { mutableFloatStateOf(playback.tempoPercent.toFloat()) }
     Column(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 4.dp)) {
         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            Button(onClick = onPlayPause, enabled = enabled, modifier = Modifier.width(140.dp)) {
-                Text(if (playback.playing) "❚❚ Pause" else "▶ Abspielen")
+            Button(onClick = onPlayPause, enabled = enabled, modifier = Modifier.width(128.dp)) {
+                Text(
+                    when {
+                        playback.preparing -> "Klang lädt …"
+                        playback.playing -> "❚❚ Pause"
+                        else -> "▶ Abspielen"
+                    }
+                )
             }
             OutlinedButton(onClick = onStop, enabled = enabled) { Text("■ Stopp") }
+            var menu by remember { mutableStateOf(false) }
+            Box {
+                TextButton(onClick = { menu = true }) { Text("${playback.instrument.label} ▾") }
+                DropdownMenu(expanded = menu, onDismissRequest = { menu = false }) {
+                    for (i in Instrument.entries) {
+                        DropdownMenuItem(
+                            text = { Text(if (i == playback.instrument) "✓ ${i.label}" else i.label) },
+                            onClick = { menu = false; onInstrument(i) },
+                        )
+                    }
+                }
+            }
         }
         Row(verticalAlignment = Alignment.CenterVertically) {
             Text("Tempo ${tempo.roundToInt()} %", modifier = Modifier.width(100.dp), style = MaterialTheme.typography.bodyMedium)

@@ -102,4 +102,23 @@ class EngravedScoreTest {
         assertEquals(listOf(0, 5760), piano.systems.map { it.startTick })
         assertEquals(5760, piano.events.filter { it.systemIndex == 1 }.minOf { it.startTick })
     }
+
+    /**
+     * Voice + piano over three systems with an intro (rests in the voice), sixteenth notes with
+     * double beams and chords of whole notes right at the start of lines.
+     */
+    @Test
+    fun songWithIntro() {
+        val r = recognizeFull("song_vocal_piano.png")
+        val s = r.score
+        assertEquals(listOf(true, false, false, true, false, false, true, false, false), s.staves.map { it.isVocal })
+        assertEquals(listOf(Clef.TREBLE, Clef.TREBLE, Clef.BASS), s.staves.take(3).map { it.clef })
+        fun line(staff: Int) = s.events.filter { it.staffIndex == staff && !it.isRest }
+            .joinToString(" ") { e -> e.pitches.joinToString("+") { name(it) } }
+        // sixteenths of the intro (the first one, E3 below two ledger lines, is not found yet)
+        assertEquals(true, line(1).contains("B3 E4 G4 B4 D5 E5 G5 B5 D5 E5 G5 B5 D4+G4"), line(1))
+        // whole-note chords at the start of the second and third system
+        assertEquals(true, line(5).startsWith("A2+A3 "), line(5))
+        assertEquals(true, line(8).startsWith("G2+G3 "), line(8))
+    }
 }
