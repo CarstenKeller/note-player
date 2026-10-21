@@ -88,6 +88,7 @@ object Omr {
         val clefs = Array(staves.size) { Clef.TREBLE }
         val keys = IntArray(staves.size)
         val headerEnd = DoubleArray(staves.size)
+        val clefEnd = DoubleArray(staves.size)
         for ((si, staff) in staves.withIndex()) {
             val own = headerGlyphs.filter { headerStaff[it.id] == si }.sortedBy { it.x0 }
             // half/whole notes and notes with a stem are never part of the clef/key/time signature
@@ -100,12 +101,18 @@ object Omr {
             clefs[si] = clef
             keys[si] = header.second
             headerEnd[si] = header.third
+            clefEnd[si] = clefRight?.toDouble() ?: (staff.left + 2.5 * d)
         }
-        // all staves of a piece normally share one key signature: a staff where none was found
-        // takes the key that most staves show
+        // all staves of a piece normally share one key signature: when most staves agree, the
+        // others (misread, e.g. clef dots taken for sharps) take that key
         val keyVotes = keys.toList().groupingBy { it }.eachCount()
         val (commonKey, votes) = keyVotes.maxBy { it.value }
-        if (commonKey != 0 && votes * 2 > keys.size) for (i in keys.indices) if (keys[i] == 0) keys[i] = commonKey
+        if (votes * 2 > keys.size) for (i in keys.indices) if (keys[i] != commonKey) {
+            keys[i] = commonKey
+            // its key signature was misread (or not read): keep its signs from being taken as
+            // notes, rests or accidentals of the first note
+            headerEnd[i] = max(headerEnd[i], clefEnd[i] + (abs(commonKey) * 1.1 + 0.6) * d)
+        }
         heads.removeAll { it.cx < headerEnd[it.staff] }
         val consumed = HashSet<Int>()
         for (g in headerGlyphs) if (headerUsed[g.id]) consumed += g.members
@@ -159,7 +166,7 @@ object Omr {
         // --- accidentals and dots -----------------------------------------------------------
         for (h in heads) {
             val acc = glyphs.filter { c ->
-                !used[c.id] && glyphStaff[c.id] == h.staff &&
+                !used[c.id] && glyphStaff[c.id] == h.staff && c.x0 > headerEnd[h.staff] &&
                     c.x1 <= h.box.left + 0.15 * d && c.x1 >= h.box.left - 1.8 * d &&
                     abs(c.cy - h.cy) <= 1.0 * d && accidentalLike(c, d)
             }.maxByOrNull { it.x1 }
@@ -438,7 +445,8 @@ object Omr {
 
     private fun filledHeads(img: BinaryImage, d: Double): List<Head> {
         val r = max(1, (0.22 * d).roundToInt())
-        val comps = Components.label(img.eroded(r))
+        val eroded = img.eroded(r)
+        val comps = Components.label(eroded)
         val out = ArrayList<Head>()
         for (c in comps.list) {
             if (c.width < 0.3 * d || c.height < 0.2 * d) continue
@@ -446,16 +454,32 @@ object Omr {
             if (c.height < 0.3 * d || c.width > 3.2 * c.height) continue
             val w = c.width + 2 * r
             val h = c.height + 2 * r
-            if (w < 0.8 * d || w > 2.1 * d || h < 0.6 * d || h > 6 * d) continue
+            if (w < 0.8 * d || w > 3.0 * d || h < 0.6 * d || h > 6 * d) continue
             if (partOfBeam(img, c, r, d)) continue
-            val x0 = (c.x0 - r).toFloat()
-            val x1 = (c.x1 + r).toFloat()
-            val y0 = c.y0 - r
-            val n = if (h > 1.5 * d) max(1, (h / (0.95 * d)).roundToInt()) else 1
-            for (k in 0 until n) {
-                val top = y0 + k * h.toDouble() / n
-                val bottom = y0 + (k + 1) * h.toDouble() / n
-                out += Head((x0 + x1) / 2.0, (top + bottom) / 2, Box(x0, top.toFloat(), x1, bottom.toFloat()), hollow = false)
+            // a second in a chord: two heads side by side, one step apart, grown into one blob
+            val parts = if (w > 1.75 * d) {
+                val mid = (c.x0 + c.x1) / 2
+                listOf(c.x0 to mid, mid + 1 to c.x1)
+            } else {
+                listOf(c.x0 to c.x1)
+            }
+            for ((px0, px1) in parts) {
+                var top = Int.MAX_VALUE
+                var bottom = Int.MIN_VALUE
+                for (y in c.y0..c.y1) for (x in px0..px1) {
+                    if (comps.labels[y * img.width + x] == c.id + 1) { top = min(top, y); bottom = max(bottom, y) }
+                }
+                if (top > bottom) continue
+                val x0 = (px0 - r).toFloat()
+                val x1 = (px1 + r).toFloat()
+                val y0 = top - r
+                val ph = bottom - top + 1 + 2 * r
+                val n = if (ph > 1.5 * d) max(1, (ph / (0.95 * d)).roundToInt()) else 1
+                for (k in 0 until n) {
+                    val t = y0 + k * ph.toDouble() / n
+                    val b = y0 + (k + 1) * ph.toDouble() / n
+                    out += Head((x0 + x1) / 2.0, (t + b) / 2, Box(x0, t.toFloat(), x1, b.toFloat()), hollow = false)
+                }
             }
         }
         return out
@@ -1082,8 +1106,15 @@ object Omr {
         val w = c.width
         val h = c.height
         if (w >= 0.8 * d && w <= 1.8 * d && h >= 0.3 * d && h <= 0.8 * d && c.fill >= 0.7) {
+            // a whole rest hangs from the second line, a half rest sits on the middle line;
+            // pieces of ties or slurs lie anywhere
             val l1 = s.lineY(1, c.cx)
-            return if (c.cy < l1 + 0.5 * d) (4 * Score.TPQ to true) else (2 * Score.TPQ to false)
+            val l2 = s.lineY(2, c.cx)
+            return when {
+                abs(c.y0 - l1) <= 0.35 * d -> 4 * Score.TPQ to true
+                abs(c.y1 - l2) <= 0.35 * d -> 2 * Score.TPQ to false
+                else -> null
+            }
         }
         if (w < 0.55 * d || w > 1.4 * d) return null
         if (h >= 2.0 * d && h <= 3.4 * d && abs(c.cy - mid) <= 1.0 * d && c.fill in 0.2..0.75) return Score.TPQ to false

@@ -8,6 +8,8 @@ import androidx.compose.foundation.gestures.detectTransformGestures
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
+import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
@@ -291,20 +293,45 @@ private fun Controls(
 ) {
     var tempo by remember(playback.tempoPercent) { mutableFloatStateOf(playback.tempoPercent.toFloat()) }
     Column(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 4.dp)) {
+        // laid out for narrow phones with large system font: nothing has to wrap
         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            Button(onClick = onPlayPause, enabled = enabled, modifier = Modifier.width(128.dp)) {
+            Button(onClick = onPlayPause, enabled = enabled, modifier = Modifier.weight(1f)) {
                 Text(
                     when {
                         playback.preparing -> "Klang lädt …"
                         playback.playing -> "❚❚ Pause"
                         else -> "▶ Abspielen"
-                    }
+                    },
+                    maxLines = 1,
                 )
             }
-            OutlinedButton(onClick = onStop, enabled = enabled) { Text("■ Stopp") }
+            OutlinedButton(onClick = onStop, enabled = enabled, modifier = Modifier.weight(1f)) { Text("■ Stopp", maxLines = 1) }
+        }
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Text("Tempo ${tempo.roundToInt()} %", maxLines = 1, softWrap = false, style = MaterialTheme.typography.bodyMedium)
+            Slider(
+                value = tempo,
+                onValueChange = { tempo = (it / 5).roundToInt() * 5f },
+                onValueChangeFinished = { onTempo(tempo.roundToInt()) },
+                valueRange = 25f..200f,
+                modifier = Modifier.weight(1f).padding(start = 12.dp),
+            )
+        }
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Text("♩ = ${playback.baseBpm}", maxLines = 1, softWrap = false, style = MaterialTheme.typography.bodyMedium)
+            Spacer(Modifier.weight(1f))
+            for (step in intArrayOf(-5, -1, 1, 5)) {
+                TextButton(onClick = { onBaseBpm(playback.baseBpm + step) }, contentPadding = PaddingValues(horizontal = 8.dp)) {
+                    Text(if (step > 0) "+$step" else "−${-step}", maxLines = 1)
+                }
+            }
+        }
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Text("Klang", maxLines = 1, style = MaterialTheme.typography.bodyMedium)
+            Spacer(Modifier.weight(1f))
             var menu by remember { mutableStateOf(false) }
             Box {
-                TextButton(onClick = { menu = true }) { Text("${playback.instrument.label} ▾") }
+                TextButton(onClick = { menu = true }) { Text("${playback.instrument.label} ▾", maxLines = 1) }
                 DropdownMenu(expanded = menu, onDismissRequest = { menu = false }) {
                     for (i in Instrument.entries) {
                         DropdownMenuItem(
@@ -312,24 +339,6 @@ private fun Controls(
                             onClick = { menu = false; onInstrument(i) },
                         )
                     }
-                }
-            }
-        }
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            Text("Tempo ${tempo.roundToInt()} %", modifier = Modifier.width(100.dp), style = MaterialTheme.typography.bodyMedium)
-            Slider(
-                value = tempo,
-                onValueChange = { tempo = (it / 5).roundToInt() * 5f },
-                onValueChangeFinished = { onTempo(tempo.roundToInt()) },
-                valueRange = 25f..200f,
-                modifier = Modifier.weight(1f),
-            )
-        }
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            Text("Grundtempo ♩ = ${playback.baseBpm}", modifier = Modifier.weight(1f), style = MaterialTheme.typography.bodyMedium)
-            for (step in intArrayOf(-5, -1, 1, 5)) {
-                TextButton(onClick = { onBaseBpm(playback.baseBpm + step) }) {
-                    Text(if (step > 0) "+$step" else "−${-step}")
                 }
             }
         }
