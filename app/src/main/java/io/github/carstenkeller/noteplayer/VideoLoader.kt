@@ -134,7 +134,8 @@ object VideoLoader {
         val nw = if (turns % 2 == 1) f.height else f.width
         val nh = if (turns % 2 == 1) f.width else f.height
         val gray = ByteArray(f.gray.size)
-        val mask = f.colored?.let { BooleanArray(it.size) }
+        val colored = f.colored
+        val mask = colored?.let { BooleanArray(it.size) }
         for (y in 0 until f.height) for (x in 0 until f.width) {
             val (nx, ny) = when (turns) {
                 1 -> (f.height - 1 - y) to x
@@ -142,7 +143,7 @@ object VideoLoader {
                 else -> y to (f.width - 1 - x)
             }
             gray[ny * nw + nx] = f.gray[y * f.width + x]
-            if (mask != null) mask[ny * nw + nx] = f.colored[y * f.width + x]
+            if (mask != null && colored != null) mask[ny * nw + nx] = colored[y * f.width + x]
         }
         return VideoFrame(nw, nh, gray, mask)
     }
