@@ -253,7 +253,13 @@ object Omr {
             }
             var sysBox = staves[allMembers.first()].box()
             for (si in allMembers) sysBox = sysBox.union(staves[si].box())
-            val end = events.filter { it.systemIndex == sys }.maxOfOrNull { it.endTick } ?: t
+            // the line ends when every staff has finished its last column (its shortest note there,
+            // so that a single note read too long does not hold up the next line)
+            val end = if (lastCol.isEmpty()) {
+                events.filter { it.systemIndex == sys }.maxOfOrNull { it.endTick } ?: t
+            } else {
+                lastCol.maxOf { (si, pc) -> colTime[pc] + columns[pc].filter { it.first == si }.minOf { it.second.duration } }
+            }
             systems += SystemInfo(sys, sysBox, t, end)
             t = end
         }
@@ -265,11 +271,24 @@ object Omr {
         // of its system carry the accompaniment
         val vocal = BooleanArray(staves.size) { si ->
             val s = staves[si]
+            // lyrics: letter-sized glyphs between this staff and the next one below
+            val next = staves.getOrNull(si + 1)
             headerGlyphs.count { g ->
-                headerStaff[g.id] == si && g.cx > s.left && g.cx < s.right &&
-                    g.cy > s.bottom(g.cx) + 0.8 * d && g.cy < s.bottom(g.cx) + 4 * d &&
+                val below = g.cy - s.bottom(g.cx)
+                val limit = if (next != null && systemOf[si + 1] == systemOf[si]) next.top(g.cx) - s.bottom(g.cx) - 1.0 * d else 4 * d
+                g.cx > s.left && g.cx < s.right && below > 0.8 * d && below < min(4 * d, limit) &&
                     g.height >= 0.35 * d && g.height <= 1.6 * d && g.width <= 1.6 * d
             } >= 6
+        }
+        // systems with the same layout (e.g. voice + piano) have the voice at the same position;
+        // a line with little text (or only rests) gets the role the majority of such systems have
+        val layouts = staves.indices.groupBy { si -> staves.indices.count { systemOf[it] == systemOf[si] } }
+        for ((size, list) in layouts) {
+            if (size < 2) continue
+            for (pos in 0 until size) {
+                val atPos = list.filter { si -> si - staves.indices.first { systemOf[it] == systemOf[si] } == pos }
+                if (atPos.any { vocal[it] } && atPos.count { vocal[it] } * 2 >= atPos.size) for (si in atPos) vocal[si] = true
+            }
         }
         val accompanied = BooleanArray(staves.size) { si -> vocal[si] && staves.indices.any { o -> systemOf[o] == systemOf[si] && !vocal[o] } }
         val (events, systems) = timing { true }
@@ -702,9 +721,11 @@ object Omr {
         var clef = Clef.TREBLE
         // the clef: glyphs starting right after the staff start. Removing the staff lines can cut
         // a clef into pieces, so all pieces in that area are taken together.
-        val band = (staff.top(left.toDouble()) - 3 * d)..(staff.bottom(left.toDouble()) + 3 * d)
+        // pieces must reach into the staff: measure numbers or text above the staff do not count
+        val staffTop = staff.top(left.toDouble())
+        val staffBottom = staff.bottom(left.toDouble())
         fun clefPiece(c: Component) = c.height <= 9 * d && !(c.width < 0.5 * d && c.height > 4.5 * d) &&
-            max(c.width, c.height) >= 0.5 * d && c.cy in band
+            max(c.width, c.height) >= 0.5 * d && c.y1 > staffTop && c.y0 < staffBottom
         val clefParts = own.filter { it.x1 > left + 0.6 * d && it.x0 < left + 2.2 * d && clefPiece(it) }.toMutableList()
         if (clefParts.isNotEmpty()) {
             var ux0: Int

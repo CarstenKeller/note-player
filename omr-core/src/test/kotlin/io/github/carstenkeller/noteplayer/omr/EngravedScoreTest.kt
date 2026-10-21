@@ -89,4 +89,17 @@ class EngravedScoreTest {
         )
         assertEquals("A2+A3@0/1920 E3+B3@1920/1920 C3+G3@3840/1920 D3@5760/960 F#3@6720/960 G2+G3@7680/1920", staff(2))
     }
+
+    /** Same music on two systems; the second system has little lyrics text. */
+    @Test
+    fun vocalLineInEverySystem() {
+        val r = recognizeFull("vocal_piano_two_systems.png")
+        assertEquals(listOf(true, false, false, true, false, false), r.score.staves.map { it.isVocal })
+        assertEquals(listOf(1, 1, 1, 1, 1, 1), r.score.staves.map { it.keyFifths })
+        val piano = r.withoutVocals
+        assertEquals(setOf(1, 2, 4, 5), piano.events.map { it.staffIndex }.toSet())
+        // the second line follows the first without a gap: 3 measures of 4/4
+        assertEquals(listOf(0, 5760), piano.systems.map { it.startTick })
+        assertEquals(5760, piano.events.filter { it.systemIndex == 1 }.minOf { it.startTick })
+    }
 }

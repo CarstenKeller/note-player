@@ -77,7 +77,11 @@ fun ScoreScreen(
     val page = remember(state.page) { state.page.asImageBitmap() }
     var showRecognized by rememberSaveable { mutableStateOf(true) }
     val tick = playback.tick
-    val current = remember(tick, score) { if (tick < 0) null else score.events.lastOrNull { it.startTick <= tick } }
+    // the cursor follows notes only: rests (especially whole-measure rests) sit elsewhere in the measure
+    val current = remember(tick, score) {
+        if (tick < 0) null else score.events.lastOrNull { !it.isRest && it.startTick <= tick }
+            ?: score.events.lastOrNull { it.startTick <= tick }
+    }
     val sounding = remember(tick, score) { if (tick < 0) emptyList() else score.eventsAt(tick) }
     val measureOffsets = remember(score) { measureOffsets(score) }
 
@@ -319,8 +323,9 @@ private fun measureOffsets(score: Score): IntArray {
 
 /** Moves the cursor smoothly from the current event towards the next one on the same staff. */
 private fun cursorX(score: Score, current: MusicEvent, tick: Int): Float {
+    // the next note of the line (any staff), so the cursor moves steadily to the right
     val next = score.events.firstOrNull {
-        it.staffIndex == current.staffIndex && it.startTick >= current.endTick && it.systemIndex == current.systemIndex
+        !it.isRest && it.startTick > current.startTick && it.systemIndex == current.systemIndex
     }
     val x0 = current.box.centerX
     if (next == null || current.durationTicks <= 0) return x0
