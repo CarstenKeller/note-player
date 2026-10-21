@@ -34,8 +34,10 @@ data class PlaybackState(
     val playing: Boolean = false,
     /** Current position in ticks; -1 = not started. */
     val tick: Int = -1,
-    /** Playback speed relative to [BASE_BPM]. */
+    /** Playback speed relative to [baseBpm]. */
     val tempoPercent: Int = 100,
+    /** Quarter notes per minute at 100 %; set by the user (tempo marks are not read). */
+    val baseBpm: Int = DEFAULT_BPM,
     /** Play vocal lines (staves with lyrics) too; off by default. */
     val includeVocals: Boolean = false,
     val instrument: Instrument = Instrument.GRAND_PIANO,
@@ -43,14 +45,14 @@ data class PlaybackState(
     val preparing: Boolean = false,
     val error: String? = null,
 ) {
-    val bpm: Int get() = (BASE_BPM * tempoPercent / 100).coerceAtLeast(10)
+    val bpm: Int get() = (baseBpm * tempoPercent / 100).coerceAtLeast(10)
 
     companion object {
         /**
-         * Tempo markings are not read from the page; 100 % means 120 quarter notes per minute,
-         * the usual default of notation programs.
+         * Tempo markings are not read from the page; without a setting, 100 % means 120 quarter
+         * notes per minute, the usual default of notation programs.
          */
-        const val BASE_BPM = 120
+        const val DEFAULT_BPM = 120
     }
 }
 
@@ -81,8 +83,14 @@ class PlayerViewModel(app: Application) : AndroidViewModel(app) {
         Instrument.entries.firstOrNull { it.name == saved }?.let { i -> _playback.update { it.copy(instrument = i) } }
     }
 
+    /** The base tempo is remembered per image, so a piece keeps its tempo when opened again. */
+    private var tempoKey: String? = null
+
     fun open(uri: Uri) {
         stop()
+        tempoKey = "bpm_" + uri.toString().hashCode()
+        val savedBpm = prefs.getInt(tempoKey, PlaybackState.DEFAULT_BPM)
+        _playback.update { it.copy(baseBpm = savedBpm, tempoPercent = 100) }
         _screen.value = ScreenState.Working
         viewModelScope.launch {
             _screen.value = try {
@@ -143,6 +151,24 @@ class PlayerViewModel(app: Application) : AndroidViewModel(app) {
         _playback.update { it.copy(tempoPercent = percent) }
         if (pb.playing || pb.preparing) startAt(player.currentTick() ?: pb.tick)
     }
+
+    fun setBaseBpm(bpm: Int) {
+        val value = bpm.coerceIn(20, 300)
+        val pb = _playback.value
+        if (pb.baseBpm == value) return
+        tempoKey?.let { prefs.edit().putInt(it, value).apply() }
+        _playback.update { it.copy(baseBpm = value) }
+        if (pb.playing || pb.preparing) {
+            // several quick taps: render the sound once, after the last one
+            restartJob?.cancel()
+            restartJob = viewModelScope.launch {
+                delay(700)
+                startAt(player.currentTick() ?: _playback.value.tick)
+            }
+        }
+    }
+
+    private var restartJob: Job? = null
 
     fun setInstrument(instrument: Instrument) {
         val pb = _playback.value

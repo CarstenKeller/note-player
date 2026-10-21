@@ -288,8 +288,12 @@ object Omr {
             for (si in staves.indices) if (isTop[si] && systemSize[si] in sizes) vocal[si] = true
         }
         val accompanied = BooleanArray(staves.size) { si -> vocal[si] && staves.indices.any { o -> systemOf[o] == systemOf[si] && !vocal[o] } }
-        val (events, systems) = timing { true }
-        val (instrEvents, instrSystems) = if (accompanied.any { it }) timing { !accompanied[it] } else events to systems
+        val (events, systems) = timing { true }.let { Timing.normalizeMeasures(it.first, it.second) }
+        val (instrEvents, instrSystems) = if (accompanied.any { it }) {
+            timing { !accompanied[it] }.let { Timing.normalizeMeasures(it.first, it.second) }
+        } else {
+            events to systems
+        }
 
         val staffInfos = staves.mapIndexed { i, s -> StaffInfo(i, systemOf[i], s.box(), clefs[i], keys[i], accompanied[i]) }
         val score = Score(Score.TPQ, events, staffInfos, systems)

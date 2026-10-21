@@ -75,6 +75,7 @@ fun ScoreScreen(
     onTempo: (Int) -> Unit,
     onIncludeVocals: (Boolean) -> Unit,
     onInstrument: (Instrument) -> Unit,
+    onBaseBpm: (Int) -> Unit,
     onSeek: (MusicEvent) -> Unit,
     onBack: () -> Unit,
 ) {
@@ -132,6 +133,7 @@ fun ScoreScreen(
                 onTempo = onTempo,
                 onIncludeVocals = onIncludeVocals,
                 onInstrument = onInstrument,
+                onBaseBpm = onBaseBpm,
             )
         }
     }
@@ -285,6 +287,7 @@ private fun Controls(
     onTempo: (Int) -> Unit,
     onIncludeVocals: (Boolean) -> Unit,
     onInstrument: (Instrument) -> Unit,
+    onBaseBpm: (Int) -> Unit,
 ) {
     var tempo by remember(playback.tempoPercent) { mutableFloatStateOf(playback.tempoPercent.toFloat()) }
     Column(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 4.dp)) {
@@ -321,6 +324,14 @@ private fun Controls(
                 valueRange = 25f..200f,
                 modifier = Modifier.weight(1f),
             )
+        }
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Text("Grundtempo ♩ = ${playback.baseBpm}", modifier = Modifier.weight(1f), style = MaterialTheme.typography.bodyMedium)
+            for (step in intArrayOf(-5, -1, 1, 5)) {
+                TextButton(onClick = { onBaseBpm(playback.baseBpm + step) }) {
+                    Text(if (step > 0) "+$step" else "−${-step}")
+                }
+            }
         }
         if (hasVocals) {
             Row(verticalAlignment = Alignment.CenterVertically) {

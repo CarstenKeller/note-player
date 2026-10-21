@@ -37,6 +37,7 @@ class MainActivity : ComponentActivity() {
                             onTempo = vm::setTempo,
                             onIncludeVocals = vm::setIncludeVocals,
                             onInstrument = vm::setInstrument,
+                            onBaseBpm = vm::setBaseBpm,
                             onSeek = vm::seekTo,
                             onBack = vm::back,
                         )
