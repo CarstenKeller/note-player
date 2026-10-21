@@ -1,9 +1,6 @@
 package io.github.carstenkeller.noteplayer.ui
 
 import android.net.Uri
-import androidx.activity.compose.rememberLauncherForActivityResult
-import androidx.activity.result.PickVisualMediaRequest
-import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Spacer
@@ -21,39 +18,15 @@ import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.remember
-import androidx.compose.runtime.saveable.rememberSaveable
-import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
-import androidx.core.content.FileProvider
-import java.io.File
 
 @Composable
 /** [working]: what is being done right now, or null. */
-fun StartScreen(working: String?, error: String?, onImage: (Uri) -> Unit) {
-    val context = LocalContext.current
-    var pendingPhoto by rememberSaveable { mutableStateOf<String?>(null) }
-
-    val takePicture = rememberLauncherForActivityResult(ActivityResultContracts.TakePicture()) { ok ->
-        val uri = pendingPhoto?.let(Uri::parse)
-        if (ok && uri != null) onImage(uri)
-    }
-    val pickImage = rememberLauncherForActivityResult(ActivityResultContracts.PickVisualMedia()) { uri ->
-        if (uri != null) onImage(uri)
-    }
-    val photoUri = remember {
-        {
-            val dir = File(context.cacheDir, "photos").apply { mkdirs() }
-            val file = File(dir, "photo_${System.currentTimeMillis()}.jpg")
-            FileProvider.getUriForFile(context, "${context.packageName}.fileprovider", file)
-        }
-    }
+fun StartScreen(working: String?, error: String?, onOpen: (List<Uri>) -> Unit) {
+    val sources = rememberSourcePickers(onOpen)
 
     Surface(Modifier.fillMaxSize()) {
         Column(
@@ -76,22 +49,13 @@ fun StartScreen(working: String?, error: String?, onImage: (Uri) -> Unit) {
                 CircularProgressIndicator()
                 Text(working, textAlign = TextAlign.Center)
             } else {
-                Button(
-                    onClick = {
-                        val uri = photoUri()
-                        pendingPhoto = uri.toString()
-                        takePicture.launch(uri)
-                    },
-                    modifier = Modifier.fillMaxWidth(),
-                ) { Text("Notenblatt fotografieren") }
-                OutlinedButton(
-                    onClick = { pickImage.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)) },
-                    modifier = Modifier.fillMaxWidth(),
-                ) { Text("Bild auswählen") }
-                OutlinedButton(
-                    onClick = { pickImage.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.VideoOnly)) },
-                    modifier = Modifier.fillMaxWidth(),
-                ) { Text("Video auswählen (scrollende Noten)") }
+                Button(onClick = sources.takePhoto, modifier = Modifier.fillMaxWidth()) { Text("Notenblatt fotografieren") }
+                OutlinedButton(onClick = sources.pickImages, modifier = Modifier.fillMaxWidth()) {
+                    Text("Bilder auswählen (ein oder mehrere Blätter)")
+                }
+                OutlinedButton(onClick = sources.pickVideo, modifier = Modifier.fillMaxWidth()) {
+                    Text("Video auswählen (scrollende Noten)")
+                }
             }
             if (error != null) {
                 Text(error, color = MaterialTheme.colorScheme.error, textAlign = TextAlign.Center)
@@ -102,6 +66,8 @@ fun StartScreen(working: String?, error: String?, onImage: (Uri) -> Unit) {
                 "• Gedruckte Noten funktionieren, Handschrift nicht.\n" +
                     "• Senkrecht von oben fotografieren, Blatt möglichst flach und gleichmäßig beleuchtet.\n" +
                     "• Lieber eine halbe Seite scharf als eine ganze Seite unscharf.\n" +
+                    "• Mehrere Blätter: ein Foto pro Blatt. Mehrere Bilder in der Reihenfolge des " +
+                    "Stücks antippen, oder nach dem ersten Blatt mit „+ Blatt“ weitere hinzufügen.\n" +
                     "• Erkannt werden u. a. Violin-/Bassschlüssel, Vorzeichen, Ganze bis Sechzehntel, " +
                     "Punktierungen, Akkorde, einfache Pausen und Klaviersysteme.\n" +
                     "• Nicht erkannt werden u. a. Taktart, Triolen, Wiederholungen und " +

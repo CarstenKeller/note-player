@@ -5,6 +5,7 @@ import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.gestures.detectTransformGestures
+import android.net.Uri
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
@@ -80,6 +81,7 @@ fun ScoreScreen(
     onBaseBpm: (Int) -> Unit,
     onSeek: (MusicEvent) -> Unit,
     onBack: () -> Unit,
+    onAddPages: (List<Uri>) -> Unit,
 ) {
     val score = state.score(playback)
     val page = remember(state.page) { state.page.asImageBitmap() }
@@ -107,6 +109,16 @@ fun ScoreScreen(
                         "Zeile ${it.systemIndex + 1} · Takt ${measureOffsets[it.systemIndex] + it.measureIndex + 1}"
                     } ?: "Note antippen = Startpunkt · zwei Finger = zoomen"
                     Text(position, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.primary)
+                }
+                // further sheets of the piece: they are played after the ones already there
+                val sources = rememberSourcePickers(onAddPages)
+                var addMenu by remember { mutableStateOf(false) }
+                Box {
+                    TextButton(onClick = { addMenu = true }) { Text("+ Blatt", maxLines = 1) }
+                    DropdownMenu(expanded = addMenu, onDismissRequest = { addMenu = false }) {
+                        DropdownMenuItem(text = { Text("Blatt fotografieren") }, onClick = { addMenu = false; sources.takePhoto() })
+                        DropdownMenuItem(text = { Text("Bilder auswählen") }, onClick = { addMenu = false; sources.pickImages() })
+                    }
                 }
             }
             for (w in state.result.warnings + listOfNotNull(playback.error)) {

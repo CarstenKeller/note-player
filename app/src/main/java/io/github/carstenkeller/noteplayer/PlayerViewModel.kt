@@ -9,6 +9,7 @@ import io.github.carstenkeller.noteplayer.audio.Instrument
 import io.github.carstenkeller.noteplayer.audio.ScorePlayer
 import io.github.carstenkeller.noteplayer.omr.MusicEvent
 import io.github.carstenkeller.noteplayer.omr.Omr
+import io.github.carstenkeller.noteplayer.omr.Pages
 import io.github.carstenkeller.noteplayer.omr.RecognitionResult
 import io.github.carstenkeller.noteplayer.omr.Score
 import io.github.carstenkeller.noteplayer.omr.VideoStitcher
@@ -89,48 +90,84 @@ class PlayerViewModel(app: Application) : AndroidViewModel(app) {
     /** The base tempo is remembered per image, so a piece keeps its tempo when opened again. */
     private var tempoKey: String? = null
 
-    fun open(uri: Uri) {
+    /** The recognized pages (photos, pictures, videos) of the piece, in playing order. */
+    private var parts: List<RecognitionResult> = emptyList()
+
+    /** Opens a piece: one or more pictures (one per sheet) or a video. */
+    fun open(uris: List<Uri>) {
+        if (uris.isEmpty()) return
         stop()
-        tempoKey = "bpm_" + uri.toString().hashCode()
+        tempoKey = "bpm_" + uris.first().toString().hashCode()
         val savedBpm = prefs.getInt(tempoKey, PlaybackState.DEFAULT_BPM)
         _playback.update { it.copy(baseBpm = savedBpm, tempoPercent = 100) }
-        val video = getApplication<Application>().contentResolver.getType(uri)?.startsWith("video/") == true
-        _screen.value = ScreenState.Working(if (video) "Video wird gelesen …" else "Noten werden erkannt …")
+        load(uris, keep = emptyList(), previous = null)
+    }
+
+    /** Adds sheets at the end of the piece; the pages already there are not recognized again. */
+    fun addPages(uris: List<Uri>) {
+        if (uris.isEmpty()) return
+        stop()
+        load(uris, keep = parts, previous = _screen.value as? ScreenState.Ready)
+    }
+
+    private fun load(uris: List<Uri>, keep: List<RecognitionResult>, previous: ScreenState.Ready?) {
+        val resolver = getApplication<Application>().contentResolver
+        _screen.value = ScreenState.Working("Noten werden erkannt …")
         viewModelScope.launch {
-            _screen.value = try {
+            val outcome = try {
                 withContext(Dispatchers.Default) {
-                    val gray = if (video) {
-                        val frames = VideoLoader.loadFrames(getApplication(), uri) { p ->
-                            _screen.value = ScreenState.Working("Video wird gelesen … ${(p * 100).toInt()} %")
+                    val added = uris.mapIndexed { i, uri ->
+                        val sheet = if (keep.size + uris.size > 1) "Blatt ${keep.size + i + 1}: " else ""
+                        val video = resolver.getType(uri)?.startsWith("video/") == true
+                        if (video) recognizeVideo(uri, sheet) else {
+                            _screen.value = ScreenState.Working("${sheet}Noten werden erkannt …")
+                            val gray = ImageLoader.loadGray(getApplication(), uri)
+                            Omr.recognize(gray, maxSideFor(gray.width, gray.height))
                         }
-                        _screen.value = ScreenState.Working("Notenblatt wird aus ${frames.size} Bildern zusammengesetzt …")
-                        VideoStitcher.stitch(frames).also {
-                            _screen.value = ScreenState.Working("Noten werden erkannt …")
-                        }
-                    } else {
-                        ImageLoader.loadGray(getApplication(), uri)
                     }
-                    val result = Omr.recognize(gray, maxSideFor(gray.width, gray.height))
-                    if (video && result.score.staves.isEmpty()) {
-                        ScreenState.Failed(
-                            "Im Video wurden keine Notenlinien gefunden. Am besten geht eine " +
-                                "Bildschirmaufnahme des Geräts, auf dem die Noten laufen. Ein mit " +
-                                "der Kamera abgefilmter Bildschirm wird nicht unterstützt: Das Bild " +
-                                "darf sich nur durch das Scrollen der Noten ändern, und die Noten " +
-                                "müssen groß sein (Abstand der Notenlinien mindestens etwa 8 Pixel)."
-                        )
-                    } else {
-                        ScreenState.Ready(ImageLoader.toBitmap(result.page), result)
-                    }
+                    val all = keep + added
+                    val result = Pages.join(all)
+                    parts = all
+                    ScreenState.Ready(ImageLoader.toBitmap(result.page), result)
                 }
             } catch (e: CancellationException) {
                 throw e
             } catch (e: OutOfMemoryError) {
-                ScreenState.Failed(if (video) "Das Video ist zu groß für den verfügbaren Speicher." else "Das Bild ist zu groß für den verfügbaren Speicher.")
+                ScreenState.Failed("Die Datei ist zu groß für den verfügbaren Speicher.")
             } catch (e: Exception) {
                 ScreenState.Failed(e.message ?: "Die Datei konnte nicht verarbeitet werden.")
             }
+            // a sheet that could not be added leaves the piece as it was
+            _screen.value = if (outcome is ScreenState.Failed && previous != null) {
+                _playback.update { it.copy(error = outcome.message) }
+                previous
+            } else {
+                if (outcome is ScreenState.Ready) _playback.update { it.copy(error = null) }
+                outcome
+            }
         }
+    }
+
+    private fun recognizeVideo(uri: Uri, sheet: String): RecognitionResult {
+        _screen.value = ScreenState.Working("${sheet}Video wird gelesen …")
+        val frames = VideoLoader.loadFrames(getApplication(), uri) { p ->
+            _screen.value = ScreenState.Working("${sheet}Video wird gelesen … ${(p * 100).toInt()} %")
+        }
+        _screen.value = ScreenState.Working("${sheet}Notenblatt wird aus ${frames.size} Bildern zusammengesetzt …")
+        val gray = VideoStitcher.stitch(frames)
+        _screen.value = ScreenState.Working("${sheet}Noten werden erkannt …")
+        val result = Omr.recognize(gray, maxSideFor(gray.width, gray.height))
+        if (result.score.staves.isEmpty()) {
+            error(
+                "${sheet}Im Video wurden keine Notenlinien gefunden. Am besten geht eine " +
+                    "Bildschirmaufnahme des Geräts, auf dem die Noten laufen. Ein mit " +
+                    "der Kamera abgefilmter Bildschirm wird nicht unterstützt: Das Bild " +
+                    "darf sich nur durch das Scrollen der Noten ändern, und die Noten " +
+                    "müssen groß sein (Abstand der Notenlinien mindestens etwa 8 Pixel). " +
+                    "Mehrere Blätter lassen sich besser als Fotos öffnen."
+            )
+        }
+        return result
     }
 
     /**
@@ -149,6 +186,7 @@ class PlayerViewModel(app: Application) : AndroidViewModel(app) {
 
     fun back() {
         stop()
+        parts = emptyList()
         _screen.value = ScreenState.Start
     }
 

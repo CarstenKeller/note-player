@@ -40,12 +40,13 @@ class MainActivity : ComponentActivity() {
                             onBaseBpm = vm::setBaseBpm,
                             onSeek = vm::seekTo,
                             onBack = vm::back,
+                            onAddPages = vm::addPages,
                         )
                     }
                     else -> StartScreen(
                         working = (s as? ScreenState.Working)?.message,
                         error = (s as? ScreenState.Failed)?.message,
-                        onImage = vm::open,
+                        onOpen = vm::open,
                     )
                 }
             }
@@ -64,13 +65,24 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun handleShare(intent: Intent?) {
-        if (intent?.action != Intent.ACTION_SEND) return
-        val uri: Uri? = if (Build.VERSION.SDK_INT >= 33) {
-            intent.getParcelableExtra(Intent.EXTRA_STREAM, Uri::class.java)
-        } else {
-            @Suppress("DEPRECATION")
-            intent.getParcelableExtra(Intent.EXTRA_STREAM)
+        val uris: List<Uri> = when (intent?.action) {
+            Intent.ACTION_SEND -> listOfNotNull(
+                if (Build.VERSION.SDK_INT >= 33) {
+                    intent.getParcelableExtra(Intent.EXTRA_STREAM, Uri::class.java)
+                } else {
+                    @Suppress("DEPRECATION")
+                    intent.getParcelableExtra(Intent.EXTRA_STREAM)
+                }
+            )
+            // several pictures shared at once: the sheets of one piece
+            Intent.ACTION_SEND_MULTIPLE -> if (Build.VERSION.SDK_INT >= 33) {
+                intent.getParcelableArrayListExtra(Intent.EXTRA_STREAM, Uri::class.java).orEmpty()
+            } else {
+                @Suppress("DEPRECATION")
+                intent.getParcelableArrayListExtra<Uri>(Intent.EXTRA_STREAM).orEmpty()
+            }
+            else -> emptyList()
         }
-        if (uri != null) vm.open(uri)
+        if (uris.isNotEmpty()) vm.open(uris)
     }
 }

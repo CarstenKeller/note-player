@@ -6,8 +6,13 @@ sich gerade befindet.
 
 ## Funktionen
 
-- **Notenblatt fotografieren** (Kamera-App des Geräts) oder **Bild auswählen** (Galerie / Dateien).
+- **Notenblatt fotografieren** (Kamera-App des Geräts) oder **Bilder auswählen** (Galerie / Dateien).
   Bilder können auch über „Teilen“ aus einer anderen App an den Notenspieler geschickt werden.
+- **Mehrere Blätter**: ein Foto pro Blatt. Dafür mehrere Bilder in der Reihenfolge des Stücks
+  auswählen (oder mehrere auf einmal teilen), oder nach dem ersten Blatt mit „+ Blatt“ weitere
+  Blätter fotografieren oder auswählen. Jedes Blatt wird für sich erkannt (eigene Größe und
+  Schräglage). Danach werden die Blätter untereinander angezeigt und nacheinander gespielt.
+  Ein Haltebogen über das Blattende hinaus wird nicht erkannt.
 - **Video mit scrollenden Noten**: Aus einem Video, in dem die Noten nach oben oder zur Seite
   über den Bildschirm laufen (z. B. eine Bildschirmaufnahme), wird ein Notenblatt
   zusammengesetzt:
@@ -79,7 +84,6 @@ Erkannt werden:
 - Mehrere Stimmen in einem System
 - Schlüssel- oder Tonartwechsel mitten in der Zeile
 - Vorschlagsnoten, Verzierungen, Dynamik
-- Mehrseitige Stücke (ein Bild pro Durchgang)
 
 ### Wie gut funktioniert das?
 
