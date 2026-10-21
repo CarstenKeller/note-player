@@ -11,6 +11,7 @@ import io.github.carstenkeller.noteplayer.omr.MusicEvent
 import io.github.carstenkeller.noteplayer.omr.Omr
 import io.github.carstenkeller.noteplayer.omr.RecognitionResult
 import io.github.carstenkeller.noteplayer.omr.Score
+import io.github.carstenkeller.noteplayer.omr.VideoStitcher
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -25,7 +26,7 @@ import kotlinx.coroutines.withContext
 
 sealed interface ScreenState {
     data object Start : ScreenState
-    data object Working : ScreenState
+    data class Working(val message: String) : ScreenState
     data class Failed(val message: String) : ScreenState
     data class Ready(val page: Bitmap, val result: RecognitionResult) : ScreenState
 }
@@ -60,6 +61,8 @@ data class PlaybackState(
 fun ScreenState.Ready.score(playback: PlaybackState): Score =
     if (playback.includeVocals) result.score else result.withoutVocals
 
+private const val MAX_PIXELS = 16_000_000L
+
 class PlayerViewModel(app: Application) : AndroidViewModel(app) {
     private val _screen = MutableStateFlow<ScreenState>(ScreenState.Start)
     val screen: StateFlow<ScreenState> = _screen.asStateFlow()
@@ -91,20 +94,47 @@ class PlayerViewModel(app: Application) : AndroidViewModel(app) {
         tempoKey = "bpm_" + uri.toString().hashCode()
         val savedBpm = prefs.getInt(tempoKey, PlaybackState.DEFAULT_BPM)
         _playback.update { it.copy(baseBpm = savedBpm, tempoPercent = 100) }
-        _screen.value = ScreenState.Working
+        val video = getApplication<Application>().contentResolver.getType(uri)?.startsWith("video/") == true
+        _screen.value = ScreenState.Working(if (video) "Video wird gelesen …" else "Noten werden erkannt …")
         viewModelScope.launch {
             _screen.value = try {
                 withContext(Dispatchers.Default) {
-                    val gray = ImageLoader.loadGray(getApplication(), uri)
-                    val result = Omr.recognize(gray)
+                    val gray = if (video) {
+                        val frames = VideoLoader.loadFrames(getApplication(), uri) { p ->
+                            _screen.value = ScreenState.Working("Video wird gelesen … ${(p * 100).toInt()} %")
+                        }
+                        _screen.value = ScreenState.Working("Notenblatt wird aus ${frames.size} Bildern zusammengesetzt …")
+                        VideoStitcher.stitch(frames).also {
+                            _screen.value = ScreenState.Working("Noten werden erkannt …")
+                        }
+                    } else {
+                        ImageLoader.loadGray(getApplication(), uri)
+                    }
+                    val result = Omr.recognize(gray, maxSideFor(gray.width, gray.height))
                     ScreenState.Ready(ImageLoader.toBitmap(result.page), result)
                 }
+            } catch (e: CancellationException) {
+                throw e
             } catch (e: OutOfMemoryError) {
-                ScreenState.Failed("Das Bild ist zu groß für den verfügbaren Speicher.")
+                ScreenState.Failed(if (video) "Das Video ist zu groß für den verfügbaren Speicher." else "Das Bild ist zu groß für den verfügbaren Speicher.")
             } catch (e: Exception) {
-                ScreenState.Failed(e.message ?: "Das Bild konnte nicht verarbeitet werden.")
+                ScreenState.Failed(e.message ?: "Die Datei konnte nicht verarbeitet werden.")
             }
         }
+    }
+
+    /**
+     * Images are recognized at up to 2400 pixels on the longer side. A page put together from a
+     * video can be much longer than wide; it keeps its width (the notes would get too small),
+     * up to a limit on the number of pixels.
+     */
+    private fun maxSideFor(width: Int, height: Int): Int {
+        val long = maxOf(width, height)
+        val short = minOf(width, height)
+        if (long <= 2400) return 2400
+        val keepShort = (long.toDouble() * minOf(1.0, 2400.0 / short)).toInt()
+        val pixelLimit = kotlin.math.sqrt(MAX_PIXELS.toDouble() * long / short).toInt()
+        return maxOf(2400, minOf(keepShort, pixelLimit))
     }
 
     fun back() {

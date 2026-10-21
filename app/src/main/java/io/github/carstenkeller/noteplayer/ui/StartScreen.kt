@@ -35,7 +35,8 @@ import androidx.core.content.FileProvider
 import java.io.File
 
 @Composable
-fun StartScreen(working: Boolean, error: String?, onImage: (Uri) -> Unit) {
+/** [working]: what is being done right now, or null. */
+fun StartScreen(working: String?, error: String?, onImage: (Uri) -> Unit) {
     val context = LocalContext.current
     var pendingPhoto by rememberSaveable { mutableStateOf<String?>(null) }
 
@@ -66,13 +67,14 @@ fun StartScreen(working: Boolean, error: String?, onImage: (Uri) -> Unit) {
             Spacer(Modifier.height(24.dp))
             Text("Notenspieler", style = MaterialTheme.typography.headlineLarge, color = MaterialTheme.colorScheme.primary)
             Text(
-                "Fotografiere ein Notenblatt oder wähle ein Bild aus. Die App erkennt die Noten, " +
-                    "spielt sie vor und zeigt dabei an, wo du dich gerade befindest.",
+                "Fotografiere ein Notenblatt oder wähle ein Bild oder ein Video aus, in dem Noten " +
+                    "über den Bildschirm laufen. Die App erkennt die Noten, spielt sie vor und " +
+                    "zeigt dabei an, wo du dich gerade befindest.",
                 textAlign = TextAlign.Center,
             )
-            if (working) {
+            if (working != null) {
                 CircularProgressIndicator()
-                Text("Noten werden erkannt …")
+                Text(working, textAlign = TextAlign.Center)
             } else {
                 Button(
                     onClick = {
@@ -86,6 +88,10 @@ fun StartScreen(working: Boolean, error: String?, onImage: (Uri) -> Unit) {
                     onClick = { pickImage.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)) },
                     modifier = Modifier.fillMaxWidth(),
                 ) { Text("Bild auswählen") }
+                OutlinedButton(
+                    onClick = { pickImage.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.VideoOnly)) },
+                    modifier = Modifier.fillMaxWidth(),
+                ) { Text("Video auswählen (scrollende Noten)") }
             }
             if (error != null) {
                 Text(error, color = MaterialTheme.colorScheme.error, textAlign = TextAlign.Center)
@@ -98,8 +104,11 @@ fun StartScreen(working: Boolean, error: String?, onImage: (Uri) -> Unit) {
                     "• Lieber eine halbe Seite scharf als eine ganze Seite unscharf.\n" +
                     "• Erkannt werden u. a. Violin-/Bassschlüssel, Vorzeichen, Ganze bis Sechzehntel, " +
                     "Punktierungen, Akkorde, einfache Pausen und Klaviersysteme.\n" +
-                    "• Nicht erkannt werden u. a. Taktart, Triolen, Haltebögen, Wiederholungen und " +
-                    "mehrere Stimmen in einem System.",
+                    "• Nicht erkannt werden u. a. Taktart, Triolen, Wiederholungen und " +
+                    "mehrere Stimmen in einem System.\n" +
+                    "• Videos: Die Noten sollten gleichmäßig nach oben oder zur Seite laufen und " +
+                    "groß genug sein. Farbige Markierungen (Cursor, hervorgehobene Noten) werden " +
+                    "herausgerechnet, wo die Stelle auch ohne Markierung zu sehen ist.",
                 style = MaterialTheme.typography.bodyMedium,
             )
         }

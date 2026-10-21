@@ -83,6 +83,7 @@ fun ScoreScreen(
 ) {
     val score = state.score(playback)
     val page = remember(state.page) { state.page.asImageBitmap() }
+    val tiles = remember(state.page) { tiles(state.page) }
     var showRecognized by rememberSaveable { mutableStateOf(true) }
     val tick = playback.tick
     // the cursor follows notes only: rests (especially whole-measure rests) sit elsewhere in the measure
@@ -115,6 +116,7 @@ fun ScoreScreen(
             ZoomableScore(
                 score = score,
                 page = page,
+                tiles = tiles,
                 space = state.result.staffSpace.toFloat(),
                 current = current,
                 sounding = sounding,
@@ -150,6 +152,7 @@ fun ScoreScreen(
 private fun ZoomableScore(
     score: Score,
     page: androidx.compose.ui.graphics.ImageBitmap,
+    tiles: List<Pair<IntOffset, androidx.compose.ui.graphics.ImageBitmap>>,
     space: Float,
     current: MusicEvent?,
     sounding: List<MusicEvent>,
@@ -161,7 +164,8 @@ private fun ZoomableScore(
     BoxWithConstraints(modifier.clipToBounds()) {
         val viewW = constraints.maxWidth.toFloat()
         val viewH = constraints.maxHeight.toFloat()
-        val fit = viewW / page.width
+        // a long strip from a sideways scrolling video fits the height, everything else the width
+        val fit = if (page.width > 3 * page.height) min(viewH * 0.8f / page.height, viewW / page.width * 6) else viewW / page.width
         var zoom by remember { mutableFloatStateOf(1f) }
         var offset by remember { mutableStateOf(Offset.Zero) }
         var lastUserMove by remember { mutableLongStateOf(0L) }
@@ -232,14 +236,16 @@ private fun ZoomableScore(
                 translate(offset.x, offset.y)
                 scale(s, s, pivot = Offset.Zero)
             }) {
-                drawImage(
-                    page,
-                    srcOffset = IntOffset.Zero,
-                    srcSize = IntSize(page.width, page.height),
-                    dstOffset = IntOffset.Zero,
-                    dstSize = IntSize(page.width, page.height),
-                    filterQuality = FilterQuality.Medium,
-                )
+                for ((at, tile) in tiles) {
+                    drawImage(
+                        tile,
+                        srcOffset = IntOffset.Zero,
+                        srcSize = IntSize(tile.width, tile.height),
+                        dstOffset = at,
+                        dstSize = IntSize(tile.width, tile.height),
+                        filterQuality = FilterQuality.Medium,
+                    )
+                }
                 val sys = current?.let { c -> score.systems.firstOrNull { it.index == c.systemIndex }?.box }
                 if (current != null && sys != null) {
                     drawRect(
@@ -354,6 +360,23 @@ private fun Controls(
         }
     }
 }
+
+/**
+ * The page cut into pieces of at most [TILE] pixels: very large bitmaps (a long page put
+ * together from a video) are not drawn by every device.
+ */
+private fun tiles(page: android.graphics.Bitmap): List<Pair<IntOffset, androidx.compose.ui.graphics.ImageBitmap>> {
+    if (page.width <= TILE && page.height <= TILE) return listOf(IntOffset.Zero to page.asImageBitmap())
+    val out = ArrayList<Pair<IntOffset, androidx.compose.ui.graphics.ImageBitmap>>()
+    for (y in 0 until page.height step TILE) for (x in 0 until page.width step TILE) {
+        val w = min(TILE, page.width - x)
+        val h = min(TILE, page.height - y)
+        out += IntOffset(x, y) to android.graphics.Bitmap.createBitmap(page, x, y, w, h).asImageBitmap()
+    }
+    return out
+}
+
+private const val TILE = 2048
 
 /** Number of measures before each system, for a page-wide measure count. */
 private fun measureOffsets(score: Score): IntArray {

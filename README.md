@@ -1,12 +1,26 @@
 # Notenspieler
 
-Android-App, die ein Notenblatt aus einem Foto oder Bild erkennt, das Stück vorspielt und
-während des Abspielens anzeigt, wo man sich gerade befindet.
+Android-App, die ein Notenblatt aus einem Foto, einem Bild oder einem Video mit
+durchlaufenden Noten erkennt, das Stück vorspielt und während des Abspielens anzeigt, wo man
+sich gerade befindet.
 
 ## Funktionen
 
 - **Notenblatt fotografieren** (Kamera-App des Geräts) oder **Bild auswählen** (Galerie / Dateien).
   Bilder können auch über „Teilen“ aus einer anderen App an den Notenspieler geschickt werden.
+- **Video mit scrollenden Noten**: Aus einem Video, in dem die Noten nach oben oder zur Seite
+  über den Bildschirm laufen (z. B. eine Bildschirmaufnahme), wird ein Notenblatt
+  zusammengesetzt:
+  - Nur der Bereich, der sich bewegt, zählt als Noten. Feste Bedienelemente und eine Titelzeile,
+    die beim Scrollen stehen bleibt, werden weggelassen.
+  - Jedes Bild wird im bisher zusammengesetzten Blatt gesucht und dort eingefügt. Passt es
+    nirgends (Seitenwechsel), wird es unten angehängt.
+  - Farbige Markierungen (Cursor, hervorgehobene Noten) werden herausgerechnet, wenn dieselbe
+    Stelle in anderen Bildern ohne Markierung zu sehen ist.
+  - Grenzen: Markierungen, die in jedem Bild über den Noten liegen (z. B. die Rahmen von
+    „Erkannte Noten umrahmen“ in einer Aufnahme dieser App), verdecken die Noten dauerhaft.
+    Zoomen während der Aufnahme wird nicht unterstützt. Die Noten müssen groß genug sein
+    (Linienabstand mindestens etwa 8 Pixel).
 - **Notenerkennung direkt auf dem Gerät**: offline, kein Server, kein Konto.
 - **Wiedergabe** mit wählbarem Klang: Flügel (Aufnahmen eines echten Klaviers, Standard),
   E-Piano, Orgel, Harfe. Das Stück wird vor dem Abspielen einmal in eine Audiodatei
@@ -90,8 +104,8 @@ Tipps:
 
 | Modul | Inhalt |
 |---|---|
-| `omr-core` | Reines Kotlin/JVM ohne Android-Abhängigkeiten: Binarisierung (Sauvola), Schräglagenkorrektur, Notenlinienerkennung und -entfernung, Symbolerkennung, Zeitberechnung, MIDI-Export. Mit Unit-Tests. |
-| `app` | Android-App (Jetpack Compose): Kamera/Galerie, Anzeige mit Markierung, Wiedergabe über `MediaPlayer` (MIDI). |
+| `omr-core` | Reines Kotlin/JVM ohne Android-Abhängigkeiten: Binarisierung (Sauvola), Schräglagenkorrektur, Notenlinienerkennung und -entfernung, Symbolerkennung, Haltebögen, Zeitberechnung, Zusammensetzen von Videobildern (`VideoStitcher`), MIDI-Export. Mit Unit-Tests. |
+| `app` | Android-App (Jetpack Compose): Kamera/Galerie/Video (`MediaCodec`), Anzeige mit Markierung, Klangerzeugung (Klavier-Samples bzw. Synthese) und Wiedergabe über `MediaPlayer`. |
 
 Ablauf der Erkennung (`Omr.recognize`):
 

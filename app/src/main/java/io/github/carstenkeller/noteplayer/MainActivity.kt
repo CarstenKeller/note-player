@@ -43,7 +43,7 @@ class MainActivity : ComponentActivity() {
                         )
                     }
                     else -> StartScreen(
-                        working = s is ScreenState.Working,
+                        working = (s as? ScreenState.Working)?.message,
                         error = (s as? ScreenState.Failed)?.message,
                         onImage = vm::open,
                     )
