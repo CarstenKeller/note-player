@@ -75,4 +75,37 @@ class VideoStitcherTest {
         fun notes(s: Score) = s.staves.indices.map { st -> s.events.filter { it.staffIndex == st }.map { it.pitches } }
         assertEquals(notes(expected), notes(actual))
     }
+
+    /** One line of music scrolling sideways, as in many videos of piano pieces. */
+    @Test
+    fun sidewaysScrollingLineIsReadLikeTheLine() {
+        val p = load("ties.png")
+        // the line of music with some room above and below
+        val top = 40
+        val h = 140
+        val w = 1300
+        val line = IntArray(w * h) { i -> p.argb[(top + i / w) * p.w + i % w] }
+        val view = 500
+        val bar = 50
+        val fh = bar + h + 70
+        val frames = ArrayList<VideoFrame>()
+        var x = 0
+        var n = 0
+        while (true) {
+            val f = IntArray(view * fh) { 0xFFFFFFFF.toInt() }
+            for (yy in 10 until 30) for (xx in 10 until 10 + 40 * (1 + (n / 4) % 3)) f[yy * view + xx] = 0xFF000000.toInt()
+            for (yy in 0 until h) System.arraycopy(line, yy * w + x, f, (bar + yy) * view, view)
+            val cx = 40 + (n * 53) % (view - 80)
+            for (yy in bar until bar + h) for (xx in cx until cx + 4) f[yy * view + xx] = 0xFFE8833A.toInt()
+            for (yy in bar + h + 20 until bar + h + 60) for (xx in 20 until view - 20) f[yy * view + xx] = 0xFF3E2C73.toInt()
+            frames += VideoFrame.fromArgb(view, fh, f)
+            if (x == w - view) break
+            n++
+            x = (x + listOf(60, 0, 90, -20, 70)[n % 5]).coerceIn(0, w - view)
+        }
+        val expected = Omr.recognize(gray(w, h, line)).score
+        val actual = Omr.recognize(VideoStitcher.stitch(frames)).score
+        assertTrue(expected.events.size > 10)
+        assertEquals(expected.events.map { it.pitches }, actual.events.map { it.pitches })
+    }
 }

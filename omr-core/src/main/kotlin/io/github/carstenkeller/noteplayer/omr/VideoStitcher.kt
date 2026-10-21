@@ -135,34 +135,55 @@ object VideoStitcher {
     }
 
     /**
-     * Rows that take part in the scrolling. A row that stays the same while the frame scrolls
-     * (a title bar above the score) is left out, blank rows go with their neighbours.
+     * Rows that take part in the scrolling. Rows that stay the same while the frame scrolls (a
+     * title bar above the score, buttons below) are cut off.
      */
     private fun scrollingRows(frames: List<VideoFrame>): IntRange? {
         val h = frames[0].height
         val w = frames[0].width
         val still = IntArray(h)
         val moved = IntArray(h)
+        val neutral = IntArray(h)
+        val blank = IntArray(h)
         for (i in 1 until frames.size) {
             val a = frames[i - 1]
             val b = frames[i]
-            if (abs(bestShift(rowInk(a), rowInk(b))) < 4) continue
+            val shift = bestShift(rowInk(a), rowInk(b))
+            if (abs(shift) < 4) continue
             for (y in 0 until h) {
+                // row y of b came from row y + shift of a; near the edge, where that row is not
+                // in the picture, row y of a went to row y - shift of b
+                val forward = y + shift in 0 until h
+                if (!forward && y - shift !in 0 until h) continue
+                val (now, before, other) = if (forward) Triple(b, a, y + shift) else Triple(a, b, y - shift)
                 var ink = 0
                 var diff = 0
+                var shifted = 0
+                fun colored(f: VideoFrame, x: Int, yy: Int) = f.colored?.get(yy * w + x) == true
                 for (x in 0 until w step 2) {
-                    ink += 255 - b[x, y]
-                    diff += abs(a[x, y] - b[x, y])
+                    // a cursor or a highlight changes from frame to frame: left out
+                    if (colored(now, x, y) || colored(before, x, y) || colored(before, x, other)) continue
+                    ink += 255 - now[x, y]
+                    diff += abs(before[x, y] - now[x, y])
+                    shifted += abs(before[x, other] - now[x, y])
                 }
-                if (ink < 3 * w / 2) continue // blank row: says nothing
-                if (diff * 10 < ink) still[y]++ else moved[y]++
+                if (ink < 3 * w / 2) { blank[y]++; continue }
+                if (diff * 2 < shifted && diff * 4 < ink) still[y]++
+                else if (shifted * 2 < diff && shifted * 2 < ink) moved[y]++
+                // looks the same either way: along a staff line, a uniform button
+                else neutral[y]++
             }
         }
         if (moved.sum() == 0) return null
-        // a row is "still" when it stood still in most scrolling steps
-        val stillRow = BooleanArray(h) { still[it] > moved[it] }
-        if (stillRow.none { it }) return null
-        return largestBlock(BooleanArray(h) { !stillRow[it] }, 0)
+        // from the edges, rows are cut off while they stood still, look the same moved or not
+        // (a uniform button) or are blank; a row that was never compared stops the cutting
+        // (after a big jump only part of the rows overlap)
+        fun cut(y: Int) = still[y] + neutral[y] > moved[y] || (moved[y] + still[y] + neutral[y] == 0 && blank[y] > 0)
+        var first = 0
+        while (first < h && cut(first)) first++
+        var last = h - 1
+        while (last > first && cut(last)) last--
+        return if (first >= last) null else first..last
     }
 
     /** The longest run of true values, bridging gaps up to [maxGap]. */

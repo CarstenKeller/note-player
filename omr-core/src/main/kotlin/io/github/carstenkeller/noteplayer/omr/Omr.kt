@@ -226,7 +226,7 @@ object Omr {
             items[si].sortBy { it.x }
             for (it in items[si]) it.measure = barlines[si].count { b -> b < it.x }
             assignPitches(items[si], staves[si], clefs[si], keys[si])
-            detectTies(conservative, items[si], staves[si], d)
+            detectTies(conservative, bin, items[si], staves[si], d)
         }
         // ties over a line break: an arc running from the last note to the end of the line
         // continues at the same pitch in the same staff of the next system
@@ -238,7 +238,7 @@ object Omr {
             val first = items[next].firstOrNull { it.heads.isNotEmpty() } ?: continue
             for (h in last.heads) {
                 if (s.right - h.box.right < 0.8 * d) continue
-                if (tieAfter(conservative, h, null, s.right.toDouble(), d, sides(s, h, d)) && first.pitches.contains(h.pitch)) {
+                if (tieAfter(conservative, bin, h, null, s.right.toDouble(), d, sides(s, h, d)) && first.pitches.contains(h.pitch)) {
                     first.holds += h.pitch
                 }
             }
@@ -591,8 +591,13 @@ object Omr {
                 val cx = (hx0 + hx1) / 2
                 val cy = (hy0 + hy1) / 2
                 val limit = (0.7 * d).roundToInt()
+                // heads a second apart sit side by side and share the ink between them: a long
+                // ink run to the side ends the ring there (at about the thickness of a ring)
+                val ringWidth = max(1, (0.2 * d).roundToInt())
                 val left = edge(cons, cx, cy, -1, 0, limit)
+                    ?: if (holeBeside(cons, cx, cy, -1, d)) edge(cons, cx, cy, -1, 0, limit, shared = ringWidth) else null
                 val right = edge(cons, cx, cy, 1, 0, limit)
+                    ?: if (left != null && holeBeside(cons, cx, cy, 1, d)) edge(cons, cx, cy, 1, 0, limit, shared = ringWidth) else null
                 val top = edge(cons, cx, cy, 0, -1, limit)
                 val bottom = edge(cons, cx, cy, 0, 1, limit)
                 if ((left == null || right == null || top == null || bottom == null) && reject("ring $left $right $top $bottom")) continue
@@ -644,8 +649,37 @@ object Omr {
         return straight(minX) || straight(maxX)
     }
 
+    /**
+     * From inside a hole: whether the ring in direction [dir] (-1 left, 1 right) is shared with
+     * a second hollow head right beside it (ink, then a small hole, then ink again).
+     */
+    private fun holeBeside(img: BinaryImage, x0: Int, y0: Int, dir: Int, d: Double, vertical: Boolean = false): Boolean {
+        val reach = (2.0 * d).roundToInt()
+        // pixel at distance k along the direction, on the line shifted sideways by o
+        fun ink(o: Int, k: Int) = if (vertical) img[x0 + o, y0 + dir * k] else img[x0 + dir * k, y0 + o]
+        for (o in -2..2) {
+            var k = 0
+            while (!ink(o, k) && k < reach) k++
+            val inkStart = k
+            while (ink(o, k) && k < reach) k++
+            if (k - inkStart > 0.6 * d) continue
+            val whiteStart = k
+            while (!ink(o, k) && k < reach) k++
+            val white = k - whiteStart
+            if (white < 2 || white > 1.0 * d || !ink(o, k)) continue
+            // the neighbour's hole is closed on both sides across the direction as well (a gap
+            // between a stem and a flag or head is open to one side)
+            val mid = k - (white / 2 + 1)
+            val lim = d.roundToInt()
+            val a = (1..lim).any { ink(o - it, mid) }
+            val b = (1..lim).any { ink(o + it, mid) }
+            if (a && b) return true
+        }
+        return false
+    }
+
     /** From inside a hole, crosses the ink ring in direction (dx, dy); returns the last ink pixel. */
-    private fun edge(img: BinaryImage, x0: Int, y0: Int, dx: Int, dy: Int, limit: Int): Int? {
+    private fun edge(img: BinaryImage, x0: Int, y0: Int, dx: Int, dy: Int, limit: Int, shared: Int = 0): Int? {
         var x = x0
         var y = y0
         var steps = 0
@@ -653,6 +687,8 @@ object Omr {
             x += dx; y += dy
             if (++steps > limit * 2) return null
         }
+        // [shared]: the ring goes on into a neighbouring shape; it ends after this many pixels
+        if (shared > 0) return if (dx != 0) x + dx * (shared - 1) else y + dy * (shared - 1)
         var ink = 0
         while (img[x, y]) {
             x += dx; y += dy
@@ -1149,7 +1185,7 @@ object Omr {
      * A tie: a thin arc right above or below two neighbouring notes of the same pitch. The
      * second note then continues the first one instead of being struck again.
      */
-    private fun detectTies(img: BinaryImage, items: List<Item>, staff: Staff, d: Double) {
+    private fun detectTies(img: BinaryImage, withLines: BinaryImage, items: List<Item>, staff: Staff, d: Double) {
         val notes = items.filter { it.heads.isNotEmpty() }
         for ((i, a) in notes.withIndex()) {
             for (ha in a.heads) {
@@ -1160,8 +1196,31 @@ object Omr {
                 if ((i + 1 until j).any { k -> notes[k].heads.any { abs(it.cy - ha.cy) < 1.6 * d } }) continue
                 val gap = hb.box.left - ha.box.right
                 if (gap < 0.2 * d || gap > 12 * d) continue
-                if (tieAfter(img, ha, hb, 0.0, d, sides(staff, ha, d))) b.holds += ha.pitch
+                if (tieAfter(img, withLines, ha, hb, 0.0, d, sides(staff, ha, d))) b.holds += ha.pitch
             }
+        }
+        // a chord tied to the next chord: where an arc runs from the first chord to a head of
+        // the second, the first chord has that note too, even if its head was misread (stacked
+        // hollow heads are hard to separate); an untied note of the first chord right next to
+        // such a note is the misread head
+        for ((i, a) in notes.withIndex()) {
+            val b = notes.getOrNull(i + 1) ?: continue
+            if (b.heads.size < 2) continue
+            val top = a.heads.minOf { it.box.top } - 0.3 * d
+            val bottom = a.heads.maxOf { it.box.bottom } + 0.3 * d
+            val left = a.heads.minOf { it.box.left }
+            val right = a.heads.maxOf { it.box.right }
+            val added = ArrayList<Int>()
+            for (hb in b.heads) {
+                if (hb.pitch in a.pitches || hb.cy < top || hb.cy > bottom) continue
+                val virtual = Head((left + right) / 2.0, hb.cy, Box(left, (hb.cy - d / 2).toFloat(), right, (hb.cy + d / 2).toFloat()), a.heads[0].hollow)
+                virtual.pitch = hb.pitch
+                if (tieAfter(img, withLines, virtual, hb, 0.0, d, sides(staff, virtual, d))) added += hb.pitch
+            }
+            if (added.isEmpty()) continue
+            val misread = a.pitches.filter { p -> p !in b.pitches && added.any { abs(it - p) <= 2 } }
+            a.pitches = (a.pitches - misread.toSet() + added).distinct().sorted()
+            b.holds += added
         }
         // ties between two chords usually tie every common note; the arcs of the inner notes
         // are crowded and easily missed
@@ -1188,7 +1247,7 @@ object Omr {
      * bows away from the heads towards the middle. Remains of staff lines are straight and run on
      * beyond the heads, so they do not count.
      */
-    private fun tieAfter(img: BinaryImage, ha: Head, hb: Head?, lineEnd: Double, d: Double, sides: IntArray): Boolean {
+    private fun tieAfter(img: BinaryImage, withLines: BinaryImage, ha: Head, hb: Head?, lineEnd: Double, d: Double, sides: IntArray): Boolean {
         val cy = if (hb == null) ha.cy else (ha.cy + hb.cy) / 2
         val from = (ha.box.right - 0.3 * d).roundToInt()
         val to = (hb?.box?.left?.plus(0.3 * d) ?: (lineEnd - 0.3 * d)).roundToInt()
@@ -1197,21 +1256,40 @@ object Omr {
             val near = (cy + side * 0.25 * d).roundToInt()
             val far = (cy + side * 1.4 * d).roundToInt()
             // distance from cy of the ink nearest to the heads, per column (-1: no ink)
-            val dist = IntArray(to - from + 1) { i ->
-                var found = -1
-                var k = 0
-                while (found < 0 && k <= abs(far - near)) {
+            fun nearest(image: BinaryImage, x: Int): Int {
+                for (k in 0..abs(far - near)) {
                     val y = near + side * k
-                    if (img[from + i, y]) found = abs(y - cy.roundToInt())
-                    k++
+                    if (image[x, y]) return abs(y - cy.roundToInt())
                 }
-                found
+                return -1
             }
-            // where the arc touches a staff line it was removed together with the line
+            // a tie is a thin, flat stroke; a flag or a stem crossed at a steep angle is long
+            // seen from above
+            val maxRun = max(2, (0.4 * d).roundToInt())
+            fun thin(x: Int, dist: Int): Boolean {
+                val y = cy.roundToInt() + side * dist
+                var run = 0
+                var yy = y
+                while (img[x, yy] && run <= maxRun) { run++; yy += side }
+                return run <= maxRun
+            }
+            // between the heads (not below or above them) most of the arc must be there without
+            // the help of the staff lines
+            val gapFrom = ha.box.right.roundToInt() + 1
+            val gapTo = (hb?.box?.left?.roundToInt() ?: lineEnd.roundToInt()) - 1
+            var clean = 0
+            val dist = IntArray(to - from + 1) { i ->
+                val x = from + i
+                // where the arc runs along a staff line it was removed together with the line:
+                // there the image with the lines stands in
+                val v = nearest(img, x)
+                if (v >= 0 && x in gapFrom..gapTo && thin(x, v)) clean++
+                if (v >= 0) v else nearest(withLines, x)
+            }
             var gap = 0
             var longestGap = 0
             for (v in dist) { gap = if (v < 0) gap + 1 else 0; longestGap = max(longestGap, gap) }
-            if (dist.count { it >= 0 } < 0.6 * dist.size || longestGap > 0.5 * d) continue
+            if (clean < 0.3 * (gapTo - gapFrom + 1) || dist.count { it >= 0 } < 0.75 * dist.size || longestGap > 0.5 * d) continue
             fun median(a: List<Int>) = a.filter { it >= 0 }.sorted().let { if (it.isEmpty()) -1 else it[it.size / 2] }
             val n = dist.size
             val q = maxOf(1, n / 6)

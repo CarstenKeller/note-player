@@ -131,4 +131,23 @@ class EngravedScoreTest {
         }
         assertEquals("C5 C5~C5 D5 E5 E5 E5 E5~E5 D5 C4+E4 C4+E4~C4+E4 G4 A4 A4 A4 A4~A4 G4", described)
     }
+
+    /** A tie on one note of a chord holds the whole chord; the same chord without a tie is struck again. */
+    @Test
+    fun tiedChords() {
+        val s = recognize("chord_ties.png")
+        val described = s.events.joinToString(" ") { e ->
+            e.pitches.joinToString("+") { name(it) } + (if (e.holds.isEmpty()) "" else "~" + e.holds.sorted().joinToString("+") { name(it) })
+        }
+        assertEquals(
+            "A3+C4+E4 A3+C4+E4~A3+C4+E4 E5 B3+C4+E4 B3+C4+E4~B3+C4+E4 C5 A3+C4+E4 A3+C4+E4 A4",
+            described,
+        )
+    }
+
+    /** The flag of an eighth note before a half note of the same pitch is no tie. */
+    @Test
+    fun flagIsNoTie() {
+        assertEquals(0, recognize("freude_hr_photo.jpg").events.count { it.holds.isNotEmpty() })
+    }
 }
