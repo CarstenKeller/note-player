@@ -8,6 +8,7 @@ import androidx.lifecycle.viewModelScope
 import io.github.carstenkeller.noteplayer.omr.MusicEvent
 import io.github.carstenkeller.noteplayer.omr.Omr
 import io.github.carstenkeller.noteplayer.omr.RecognitionResult
+import io.github.carstenkeller.noteplayer.omr.Score
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
@@ -30,8 +31,25 @@ data class PlaybackState(
     val playing: Boolean = false,
     /** Current position in ticks; -1 = not started. */
     val tick: Int = -1,
-    val bpm: Int = 90,
-)
+    /** Playback speed relative to [BASE_BPM]. */
+    val tempoPercent: Int = 100,
+    /** Play vocal lines (staves with lyrics) too; off by default. */
+    val includeVocals: Boolean = false,
+) {
+    val bpm: Int get() = (BASE_BPM * tempoPercent / 100).coerceAtLeast(10)
+
+    companion object {
+        /**
+         * Tempo markings are not read from the page; 100 % means 120 quarter notes per minute,
+         * the usual default of notation programs.
+         */
+        const val BASE_BPM = 120
+    }
+}
+
+/** The score to play and show: with or without vocal lines. */
+fun ScreenState.Ready.score(playback: PlaybackState): Score =
+    if (playback.includeVocals) result.score else result.withoutVocals
 
 class PlayerViewModel(app: Application) : AndroidViewModel(app) {
     private val _screen = MutableStateFlow<ScreenState>(ScreenState.Start)
@@ -73,9 +91,9 @@ class PlayerViewModel(app: Application) : AndroidViewModel(app) {
 
     fun togglePlay() {
         val ready = _screen.value as? ScreenState.Ready ?: return
-        val score = ready.result.score
-        if (score.events.isEmpty()) return
         val pb = _playback.value
+        val score = ready.score(pb)
+        if (score.events.isEmpty()) return
         if (pb.playing) {
             player.pause()
             ticker?.cancel()
@@ -98,16 +116,23 @@ class PlayerViewModel(app: Application) : AndroidViewModel(app) {
         else _playback.update { it.copy(tick = event.startTick) }
     }
 
-    fun setTempo(bpm: Int) {
+    fun setTempo(percent: Int) {
         val pb = _playback.value
-        if (pb.bpm == bpm) return
-        _playback.update { it.copy(bpm = bpm) }
+        if (pb.tempoPercent == percent) return
+        _playback.update { it.copy(tempoPercent = percent) }
         if (pb.playing) startAt(player.currentTick() ?: pb.tick)
+    }
+
+    /** Switching the vocal line changes the timeline, so playback starts over. */
+    fun setIncludeVocals(include: Boolean) {
+        if (_playback.value.includeVocals == include) return
+        stop()
+        _playback.update { it.copy(includeVocals = include) }
     }
 
     private fun startAt(tick: Int) {
         val ready = _screen.value as? ScreenState.Ready ?: return
-        val score = ready.result.score
+        val score = ready.score(_playback.value)
         ticker?.cancel()
         try {
             player.play(score, _playback.value.bpm, tick.coerceAtLeast(0))

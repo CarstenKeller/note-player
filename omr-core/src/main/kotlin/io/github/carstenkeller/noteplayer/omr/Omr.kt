@@ -194,12 +194,15 @@ object Omr {
         // Notes printed above each other sound together. Items of all staves of a system are
         // grouped into columns by x; a column starts when the previous column of each of its
         // staves has ended (the latest such time wins, so a missed note only causes a local error).
+        fun timing(include: (Int) -> Boolean): Pair<List<MusicEvent>, List<SystemInfo>> {
         val events = ArrayList<MusicEvent>()
         val systems = ArrayList<SystemInfo>()
         var t = 0
         val systemCount = (systemOf.maxOrNull() ?: -1) + 1
         for (sys in 0 until systemCount) {
-            val members = staves.indices.filter { systemOf[it] == sys }
+            val allMembers = staves.indices.filter { systemOf[it] == sys }
+            val members = allMembers.filter(include)
+            if (members.isEmpty()) continue
             // in photos the staves of a system can be shifted against each other (perspective);
             // barlines run straight through the system, so they map each staff onto the first one
             val ref = members.first()
@@ -248,18 +251,35 @@ object Omr {
                 }
                 events += MusicEvent(start, it.duration, emptyList(), it.box, si, sys, it.measure)
             }
-            var sysBox = staves[members.first()].box()
-            for (si in members) sysBox = sysBox.union(staves[si].box())
+            var sysBox = staves[allMembers.first()].box()
+            for (si in allMembers) sysBox = sysBox.union(staves[si].box())
             val end = events.filter { it.systemIndex == sys }.maxOfOrNull { it.endTick } ?: t
             systems += SystemInfo(sys, sysBox, t, end)
             t = end
         }
         events.sortWith(compareBy<MusicEvent>({ it.startTick }, { it.staffIndex }))
+        return events to systems
+        }
 
-        val staffInfos = staves.mapIndexed { i, s -> StaffInfo(i, systemOf[i], s.box(), clefs[i], keys[i]) }
+        // a staff with lyrics below it is a vocal line; it can be left out when other staves
+        // of its system carry the accompaniment
+        val vocal = BooleanArray(staves.size) { si ->
+            val s = staves[si]
+            headerGlyphs.count { g ->
+                headerStaff[g.id] == si && g.cx > s.left && g.cx < s.right &&
+                    g.cy > s.bottom(g.cx) + 0.8 * d && g.cy < s.bottom(g.cx) + 4 * d &&
+                    g.height >= 0.35 * d && g.height <= 1.6 * d && g.width <= 1.6 * d
+            } >= 6
+        }
+        val accompanied = BooleanArray(staves.size) { si -> vocal[si] && staves.indices.any { o -> systemOf[o] == systemOf[si] && !vocal[o] } }
+        val (events, systems) = timing { true }
+        val (instrEvents, instrSystems) = if (accompanied.any { it }) timing { !accompanied[it] } else events to systems
+
+        val staffInfos = staves.mapIndexed { i, s -> StaffInfo(i, systemOf[i], s.box(), clefs[i], keys[i], accompanied[i]) }
         val score = Score(Score.TPQ, events, staffInfos, systems)
+        val instrumental = Score(Score.TPQ, instrEvents, staffInfos, instrSystems)
         if (score.noteCount == 0) warnings += "Es wurden Notenlinien, aber keine Noten erkannt."
-        return RecognitionResult(gray, score, d, skew, warnings)
+        return RecognitionResult(gray, score, instrumental, d, skew, warnings)
     }
 
     /** Pairs (x in this staff, x in the reference staff): staff starts, matching barlines, staff ends. */
@@ -287,7 +307,7 @@ object Omr {
     }
 
     private fun empty(gray: GrayImage, d: Double, skew: Double, msg: String) =
-        RecognitionResult(gray, Score(Score.TPQ, emptyList(), emptyList(), emptyList()), d, skew, listOf(msg))
+        Score(Score.TPQ, emptyList(), emptyList(), emptyList()).let { RecognitionResult(gray, it, it, d, skew, listOf(msg)) }
 
     // ------------------------------------------------------------------------------------
 
@@ -506,17 +526,19 @@ object Omr {
 
     private fun ledgersOk(bin: BinaryImage, s: Staff, h: Head, d: Double, t: Int): Boolean {
         val step = s.stepAt(h.cx, h.cy)
-        val k = when {
-            step >= 10 -> 10
-            step <= -2 -> -2
+        val ledgers = when {
+            step >= 10 -> (10..step step 2).toList()
+            step <= -2 -> (-2 downTo step step 2).toList()
             else -> return true
         }
-        val y = (s.bottom(h.cx) - k * s.space(h.cx) / 2).roundToInt()
         val tol = t + 1
-        // the ledger line sticks out on both sides of the head
-        fun inkNear(x: Int) = (-tol..tol).any { bin[x, y + it] }
         val out = max(1, (0.12 * d).roundToInt())
-        return inkNear(h.box.left.roundToInt() - out) && inkNear(h.box.right.roundToInt() + out)
+        // every ledger line between staff and note must be there and stick out on both sides of the head
+        return ledgers.all { k ->
+            val y = (s.bottom(h.cx) - k * s.space(h.cx) / 2).roundToInt()
+            fun inkNear(x: Int) = (-tol..tol).any { bin[x, y + it] }
+            inkNear(h.box.left.roundToInt() - out) && inkNear(h.box.right.roundToInt() + out)
+        }
     }
 
     private fun dedupe(heads: MutableList<Head>, d: Double) {
@@ -678,29 +700,43 @@ object Omr {
         val left = staff.left
         var cursor = left + 0.5 * d
         var clef = Clef.TREBLE
-        val clefComp = own.firstOrNull {
-            it.x0 < left + 3.5 * d && it.x1 > left + 0.6 * d && it.height >= 2.5 * d && it.height <= 9 * d &&
-                it.width >= 0.8 * d && it.width <= 3.5 * d
-        }
-        if (clefComp != null) {
-            val top = staff.top(clefComp.cx)
-            val bottom = staff.bottom(clefComp.cx)
-            clef = when {
-                clefComp.y0 < top - 0.7 * d || clefComp.y1 > bottom + 0.5 * d -> Clef.TREBLE
-                clefComp.y1 < bottom - 0.6 * d -> Clef.BASS
-                else -> Clef.ALTO
-            }
-            cursor = clefComp.x1.toDouble()
-            // fragments of the clef and the two dots of a bass clef
-            for (c in own) {
-                if (c.x0 >= clefComp.x0 - 0.3 * d && c.x1 <= clefComp.x1 + 0.3 * d) used[c.id] = true
-            }
-            for (c in own) {
-                if (c.x0 > cursor && c.x0 < cursor + 0.8 * d && max(c.width, c.height) < 0.65 * d) {
-                    cursor = max(cursor, c.x1.toDouble()); used[c.id] = true
+        // the clef: glyphs starting right after the staff start. Removing the staff lines can cut
+        // a clef into pieces, so all pieces in that area are taken together.
+        val band = (staff.top(left.toDouble()) - 3 * d)..(staff.bottom(left.toDouble()) + 3 * d)
+        fun clefPiece(c: Component) = c.height <= 9 * d && !(c.width < 0.5 * d && c.height > 4.5 * d) &&
+            max(c.width, c.height) >= 0.5 * d && c.cy in band
+        val clefParts = own.filter { it.x1 > left + 0.6 * d && it.x0 < left + 2.2 * d && clefPiece(it) }.toMutableList()
+        if (clefParts.isNotEmpty()) {
+            var ux0: Int
+            var ux1: Int
+            do {
+                ux0 = clefParts.minOf { it.x0 }
+                ux1 = clefParts.maxOf { it.x1 }
+                val more = own.filter { c -> c !in clefParts && clefPiece(c) && c.x0 < ux1 + 0.2 * d && c.x1 > ux0 - 0.2 * d }
+                clefParts += more
+            } while (more.isNotEmpty() && clefParts.maxOf { it.x1 } - clefParts.minOf { it.x0 } <= 3.5 * d)
+            ux0 = clefParts.minOf { it.x0 }
+            ux1 = clefParts.maxOf { it.x1 }
+            val uy0 = clefParts.minOf { it.y0 }
+            val uy1 = clefParts.maxOf { it.y1 }
+            if (uy1 - uy0 >= 2.0 * d && ux1 - ux0 <= 3.5 * d) {
+                val cx = (ux0 + ux1) / 2.0
+                val top = staff.top(cx)
+                val bottom = staff.bottom(cx)
+                clef = when {
+                    uy0 < top - 0.7 * d || uy1 > bottom + 0.5 * d -> Clef.TREBLE
+                    uy1 < bottom - 0.6 * d -> Clef.BASS
+                    else -> Clef.ALTO
+                }
+                cursor = ux1.toDouble()
+                for (c in clefParts) used[c.id] = true
+                // the two dots of a bass clef
+                for (c in own) {
+                    if (c.x0 > cursor && c.x0 < cursor + 0.8 * d && max(c.width, c.height) < 0.65 * d) {
+                        cursor = max(cursor, c.x1.toDouble()); used[c.id] = true
+                    }
                 }
             }
-            used[clefComp.id] = true
         }
 
         var sharps = 0
@@ -734,9 +770,30 @@ object Omr {
                     it.width >= 0.8 * d && it.width <= 2.4 * d && abs(it.cy - mid) < 0.6 * d &&
                     balanced(img, it) // a note with its stem has nearly all ink in one half
             }
-            if (stacked != null) { cursor = max(cursor, stacked.x1.toDouble()); used[stacked.id] = true }
+            if (stacked != null) {
+                cursor = max(cursor, stacked.x1.toDouble()); used[stacked.id] = true
+            } else {
+                // digits broken into pieces: pieces stacked at the same x that together span the staff
+                val pieces = own.filter {
+                    it.x0 >= cursor - 1 && it.x0 < cursor + 2.0 * d && it.height <= 2.7 * d && max(it.width, it.height) >= 0.4 * d
+                }
+                val first = pieces.minByOrNull { it.x0 }
+                if (first != null) {
+                    val column = pieces.filter { it.x0 < first.x1 + 0.2 * d && it.x1 > first.x0 - 0.2 * d }
+                    val ux0 = column.minOf { it.x0 }
+                    val ux1 = column.maxOf { it.x1 }
+                    val top = staff.top(first.cx)
+                    val bottom = staff.bottom(first.cx)
+                    val spans = column.minOf { it.y0 } <= top + 0.5 * d && column.maxOf { it.y1 } >= bottom - 0.5 * d
+                    if (spans && column.any { it.cy < mid } && column.any { it.cy > mid } && ux1 - ux0 in (0.7 * d).toInt()..(2.4 * d).toInt()) {
+                        cursor = max(cursor, ux1.toDouble())
+                        for (c in column) used[c.id] = true
+                    }
+                }
+            }
         }
-        return Triple(clef, key, cursor + 0.1 * d)
+        // a line always starts with a clef; nothing within its usual width is a note or rest
+        return Triple(clef, key, max(cursor + 0.1 * d, left + 3.0 * d))
     }
 
     private fun groupChords(heads: List<Head>, d: Double): List<List<Head>> {

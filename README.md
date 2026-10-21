@@ -9,11 +9,18 @@ während des Abspielens anzeigt, wo man sich gerade befindet.
   Bilder können auch über „Teilen“ aus einer anderen App an den Notenspieler geschickt werden.
 - **Notenerkennung direkt auf dem Gerät**: offline, kein Server, kein Konto.
 - **Wiedergabe** über den eingebauten MIDI-Synthesizer von Android (Klavierklang).
-  Das Tempo lässt sich einstellen (30–200 Schläge pro Minute).
+  Das Tempo wird in Prozent eingestellt (25–200 %). Tempoangaben auf dem Blatt werden nicht
+  gelesen; 100 % entsprechen 120 Vierteln pro Minute, dem üblichen Standard von Notensatzprogrammen.
+- **Gesangsstimme**: Eine Notenzeile mit Liedtext darunter, zu der es eine Begleitung gibt
+  (z. B. Klavier), gilt als Gesangsstimme. Sie wird standardmäßig weder abgespielt noch markiert
+  und lässt sich mit „Gesangsstimme (mit Liedtext) abspielen“ dazuschalten.
+- **Zoomen**: mit zwei Fingern auseinander- bzw. zusammenziehen, mit einem Finger verschieben,
+  Doppeltippen zoomt hinein bzw. wieder ganz heraus.
 - **Positionsanzeige** beim Abspielen:
   - Die gerade klingenden Noten werden orange hervorgehoben.
   - Ein senkrechter Cursor läuft durch die aktuelle Notenzeile.
-  - Die Ansicht scrollt automatisch zur aktuellen Zeile.
+  - Die Ansicht folgt automatisch der aktuellen Stelle, auch gezoomt. Nach dem Verschieben
+    von Hand pausiert das Mitlaufen für ein paar Sekunden.
   - Oben steht „Zeile x von y · Takt n“.
 - **Startpunkt wählen**: Wer auf eine Note tippt, setzt dort den Startpunkt. Läuft die
   Wiedergabe gerade, springt sie dorthin.

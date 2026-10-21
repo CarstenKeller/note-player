@@ -16,6 +16,8 @@ data class StaffInfo(
     val clef: Clef,
     /** Positive = number of sharps, negative = number of flats. */
     val keyFifths: Int,
+    /** A vocal line (lyrics below) with accompaniment in other staves of its system. */
+    val isVocal: Boolean = false,
 )
 
 /** A chord (one or more pitches) or a rest. Times are in MIDI ticks. */
@@ -55,8 +57,13 @@ data class Score(
 /** Result of the recognition: the normalized (deskewed) page and the score in its coordinates. */
 class RecognitionResult(
     val page: GrayImage,
+    /** All staves. */
     val score: Score,
+    /** Without vocal lines that have accompaniment (same as [score] if there are none). */
+    val withoutVocals: Score,
     val staffSpace: Double,
     val skewDegrees: Double,
     val warnings: List<String>,
-)
+) {
+    val hasVocals: Boolean get() = score.staves.any { it.isVocal }
+}

@@ -11,14 +11,16 @@ import kotlin.test.assertEquals
  */
 class EngravedScoreTest {
 
-    private fun recognize(name: String): Score {
+    private fun recognize(name: String): Score = recognizeFull(name).score
+
+    private fun recognizeFull(name: String): RecognitionResult {
         val img = ImageIO.read(javaClass.getResourceAsStream("/$name")!!)
         val px = IntArray(img.width * img.height)
         for (y in 0 until img.height) for (x in 0 until img.width) {
             val c = img.getRGB(x, y)
             px[y * img.width + x] = (((c shr 16) and 255) * 299 + ((c shr 8) and 255) * 587 + (c and 255) * 114) / 1000
         }
-        return Omr.recognize(GrayImage(img.width, img.height, px)).score
+        return Omr.recognize(GrayImage(img.width, img.height, px))
     }
 
     private val names = listOf("C", "C#", "D", "Eb", "E", "F", "F#", "G", "Ab", "A", "Bb", "B")
@@ -66,7 +68,10 @@ class EngravedScoreTest {
     /** Voice with lyrics above a piano grand staff: chords of half/whole notes, rests, dots. */
     @Test
     fun vocalWithPiano() {
-        val s = recognize("vocal_piano.png")
+        val r = recognizeFull("vocal_piano.png")
+        val s = r.score
+        assertEquals(listOf(true, false, false), s.staves.map { it.isVocal })
+        assertEquals(setOf(1, 2), r.withoutVocals.events.map { it.staffIndex }.toSet())
         assertEquals(1, s.systems.size)
         assertEquals(listOf(Clef.TREBLE, Clef.TREBLE, Clef.BASS), s.staves.map { it.clef })
         fun staff(i: Int) = s.events.filter { it.staffIndex == i }.joinToString(" ") { e ->
