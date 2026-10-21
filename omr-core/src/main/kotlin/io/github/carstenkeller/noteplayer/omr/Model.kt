@@ -30,6 +30,8 @@ data class MusicEvent(
     val staffIndex: Int,
     val systemIndex: Int,
     val measureIndex: Int,
+    /** Pitches tied over from the previous note: they keep sounding instead of being struck again. */
+    val holds: List<Int> = emptyList(),
 ) {
     val isRest get() = pitches.isEmpty()
     val endTick get() = startTick + durationTicks

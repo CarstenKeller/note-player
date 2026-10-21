@@ -121,4 +121,14 @@ class EngravedScoreTest {
         assertEquals(true, line(5).startsWith("A2+A3 "), line(5))
         assertEquals(true, line(8).startsWith("G2+G3 "), line(8))
     }
+
+    /** Ties within a measure, over a barline, on a chord; repeated notes without a tie stay struck. */
+    @Test
+    fun ties() {
+        val s = recognize("ties.png")
+        val described = s.events.joinToString(" ") { e ->
+            e.pitches.joinToString("+") { name(it) } + (if (e.holds.isEmpty()) "" else "~" + e.holds.sorted().joinToString("+") { name(it) })
+        }
+        assertEquals("C5 C5~C5 D5 E5 E5 E5 E5~E5 D5 C4+E4 C4+E4~C4+E4 G4 A4 A4 A4 A4~A4 G4", described)
+    }
 }

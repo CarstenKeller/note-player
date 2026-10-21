@@ -27,6 +27,7 @@ object Omr {
         var stemDir = 0 // -1 = up, +1 = down, 0 = no stem
         var dotted = false
         var accidental: Int? = null
+        var pitch = 0
         var group = -1
     }
 
@@ -39,6 +40,8 @@ object Omr {
     ) {
         var measure = 0
         var pitches: List<Int> = emptyList()
+        /** Pitches tied over from the previous note: they keep sounding instead of being struck again. */
+        val holds = HashSet<Int>()
     }
 
     fun recognize(input: GrayImage, maxSide: Int = 2400): RecognitionResult {
@@ -223,6 +226,22 @@ object Omr {
             items[si].sortBy { it.x }
             for (it in items[si]) it.measure = barlines[si].count { b -> b < it.x }
             assignPitches(items[si], staves[si], clefs[si], keys[si])
+            detectTies(conservative, items[si], staves[si], d)
+        }
+        // ties over a line break: an arc running from the last note to the end of the line
+        // continues at the same pitch in the same staff of the next system
+        for ((si, s) in staves.withIndex()) {
+            val sys = systemOf[si]
+            val pos = si - staves.indices.first { systemOf[it] == sys }
+            val next = staves.indices.filter { systemOf[it] == sys + 1 }.getOrNull(pos) ?: continue
+            val last = items[si].lastOrNull { it.heads.isNotEmpty() } ?: continue
+            val first = items[next].firstOrNull { it.heads.isNotEmpty() } ?: continue
+            for (h in last.heads) {
+                if (s.right - h.box.right < 0.8 * d) continue
+                if (tieAfter(conservative, h, null, s.right.toDouble(), d, sides(s, h, d)) && first.pitches.contains(h.pitch)) {
+                    first.holds += h.pitch
+                }
+            }
         }
 
         // --- timing --------------------------------------------------------------------------
@@ -271,7 +290,7 @@ object Omr {
                 colTime[c] = time
                 for (si in col.map { it.first }.distinct()) lastCol[si] = c
                 for ((si, it) in col) {
-                    events += MusicEvent(time, it.duration, it.pitches, it.box, si, sys, it.measure)
+                    events += MusicEvent(time, it.duration, it.pitches, it.box, si, sys, it.measure, it.holds.filter { p -> p in it.pitches })
                 }
             }
             // whole-measure rests sit in the middle of their measure: they start with the
@@ -1126,6 +1145,96 @@ object Omr {
     private val FLAT_ORDER = intArrayOf(6, 2, 5, 1, 4, 0, 3)  // B E A D G C F
     private val SEMITONES = intArrayOf(0, 2, 4, 5, 7, 9, 11)
 
+    /**
+     * A tie: a thin arc right above or below two neighbouring notes of the same pitch. The
+     * second note then continues the first one instead of being struck again.
+     */
+    private fun detectTies(img: BinaryImage, items: List<Item>, staff: Staff, d: Double) {
+        val notes = items.filter { it.heads.isNotEmpty() }
+        for ((i, a) in notes.withIndex()) {
+            for (ha in a.heads) {
+                val j = (i + 1 until notes.size).firstOrNull { k -> notes[k].heads.any { it.pitch == ha.pitch } } ?: continue
+                val b = notes[j]
+                val hb = b.heads.first { it.pitch == ha.pitch }
+                // a tie connects neighbouring notes: no other note in between at that height
+                if ((i + 1 until j).any { k -> notes[k].heads.any { abs(it.cy - ha.cy) < 1.6 * d } }) continue
+                val gap = hb.box.left - ha.box.right
+                if (gap < 0.2 * d || gap > 12 * d) continue
+                if (tieAfter(img, ha, hb, 0.0, d, sides(staff, ha, d))) b.holds += ha.pitch
+            }
+        }
+        // ties between two chords usually tie every common note; the arcs of the inner notes
+        // are crowded and easily missed
+        for ((i, a) in notes.withIndex()) {
+            val b = notes.getOrNull(i + 1) ?: continue
+            val common = a.pitches.filter { it in b.pitches }
+            if (common.size >= 2 && b.holds.any { it in common }) b.holds += common
+        }
+    }
+
+    /**
+     * Sides (-1 above, 1 below) where a tie of [h] may be. Beyond the staff a tie is drawn away
+     * from it; on the inner side the ledger lines of neighbouring notes look much like a tie.
+     */
+    private fun sides(staff: Staff, h: Head, d: Double): IntArray = when {
+        h.cy > staff.bottom(h.cx) + 0.75 * d -> intArrayOf(1)
+        h.cy < staff.top(h.cx) - 0.75 * d -> intArrayOf(-1)
+        else -> intArrayOf(-1, 1)
+    }
+
+    /**
+     * True if a tie runs from the note head [ha] to the note head [hb] (or, without [hb], to the
+     * end of the line at [lineEnd]) just above or just below the heads: ink without a gap that
+     * bows away from the heads towards the middle. Remains of staff lines are straight and run on
+     * beyond the heads, so they do not count.
+     */
+    private fun tieAfter(img: BinaryImage, ha: Head, hb: Head?, lineEnd: Double, d: Double, sides: IntArray): Boolean {
+        val cy = if (hb == null) ha.cy else (ha.cy + hb.cy) / 2
+        val from = (ha.box.right - 0.3 * d).roundToInt()
+        val to = (hb?.box?.left?.plus(0.3 * d) ?: (lineEnd - 0.3 * d)).roundToInt()
+        if (to - from < 3) return false
+        for (side in sides) {
+            val near = (cy + side * 0.25 * d).roundToInt()
+            val far = (cy + side * 1.4 * d).roundToInt()
+            // distance from cy of the ink nearest to the heads, per column (-1: no ink)
+            val dist = IntArray(to - from + 1) { i ->
+                var found = -1
+                var k = 0
+                while (found < 0 && k <= abs(far - near)) {
+                    val y = near + side * k
+                    if (img[from + i, y]) found = abs(y - cy.roundToInt())
+                    k++
+                }
+                found
+            }
+            // where the arc touches a staff line it was removed together with the line
+            var gap = 0
+            var longestGap = 0
+            for (v in dist) { gap = if (v < 0) gap + 1 else 0; longestGap = max(longestGap, gap) }
+            if (dist.count { it >= 0 } < 0.6 * dist.size || longestGap > 0.5 * d) continue
+            fun median(a: List<Int>) = a.filter { it >= 0 }.sorted().let { if (it.isEmpty()) -1 else it[it.size / 2] }
+            val n = dist.size
+            val q = maxOf(1, n / 6)
+            // at its ends the arc touches the heads
+            val left = dist.take(q).filter { it >= 0 }.minOrNull() ?: -1
+            val right = dist.takeLast(q).filter { it >= 0 }.minOrNull() ?: -1
+            val mid = median(dist.slice(n / 2 - q / 2..minOf(n - 1, n / 2 + q / 2)))
+            if (left < 0 || right < 0 || mid < 0) continue
+            val bow = maxOf(1.0, 0.15 * d)
+            // a tie to the end of the line is only the first half of the arc
+            val curved = if (hb == null) right - left >= bow else mid - maxOf(left, right) >= bow
+            if (!curved) continue
+            // a straight line would continue on both sides
+            val y = (cy + side * (if (hb == null) right else mid)).roundToInt()
+            fun inked(x: Int) = (y - 1..y + 1).any { img[x, it] }
+            val outsideLeft = (ha.box.left - 0.5 * d).roundToInt()
+            val outsideRight = (hb?.box?.right?.plus(0.5 * d) ?: lineEnd + 0.5 * d).roundToInt()
+            if (inked(outsideLeft) && inked(outsideRight)) continue
+            return true
+        }
+        return false
+    }
+
     private fun assignPitches(items: List<Item>, staff: Staff, clef: Clef, key: Int) {
         // diatonic number (octave * 7 + letter) of the bottom line
         val base = when (clef) {
@@ -1146,7 +1255,7 @@ object Omr {
                 val letter = Math.floorMod(dia, 7)
                 val octave = Math.floorDiv(dia, 7)
                 val alter = local[dia] ?: keyAlter[letter]
-                12 * (octave + 1) + SEMITONES[letter] + alter
+                (12 * (octave + 1) + SEMITONES[letter] + alter).also { p -> h.pitch = p }
             }.distinct().sorted()
         }
     }

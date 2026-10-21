@@ -41,6 +41,9 @@ Erkannt werden:
 - Tonart-Vorzeichen (♯/♭) sowie Vorzeichen vor einzelnen Noten (♯, ♭, ♮), gültig bis zum Taktstrich
 - Ganze, Halbe, Viertel, Achtel, Sechzehntel (Fähnchen und Balken) und Punktierungen
 - Akkorde
+- Haltebögen zwischen zwei gleich hohen Noten (auch über Taktstrich und Zeilenumbruch): Die
+  zweite Note wird nicht neu angeschlagen, sondern der Ton klingt weiter. Wird bei einem Akkord
+  ein Bogen erkannt, gelten alle gemeinsamen Töne der beiden Akkorde als gebunden.
 - Ganze, halbe, Viertel- und Achtelpausen
 - Taktstriche
 - Systeme aus mehreren Notenzeilen (z. B. Gesang + Klavier), die links durch eine Linie
@@ -54,7 +57,8 @@ Erkannt werden:
 - Handschrift
 - Taktart (wird überlesen; eine Ganztaktpause zählt als 4 Viertel, wenn sonst nichts im Takt steht)
 - Triolen
-- Haltebögen (gebundene Noten werden neu angeschlagen)
+- Bindebögen (Legato) werden ignoriert; zwischen zwei gleich hohen Noten sind sie von
+  Haltebögen nicht zu unterscheiden und werden dort wie Haltebögen behandelt
 - Wiederholungen, Volta-Klammern, D.C./D.S.
 - Mehrere Stimmen in einem System
 - Schlüssel- oder Tonartwechsel mitten in der Zeile

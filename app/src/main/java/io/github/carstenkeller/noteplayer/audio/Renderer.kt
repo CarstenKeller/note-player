@@ -1,12 +1,14 @@
 package io.github.carstenkeller.noteplayer.audio
 
 import io.github.carstenkeller.noteplayer.omr.Clef
+import io.github.carstenkeller.noteplayer.omr.MusicEvent
 import io.github.carstenkeller.noteplayer.omr.Score
 import java.io.File
 import java.io.FileOutputStream
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
 import kotlin.math.PI
+import kotlin.math.abs
 import kotlin.math.exp
 import kotlin.math.floor
 import kotlin.math.min
@@ -28,26 +30,49 @@ object Renderer {
         val total = secondsOf(score.totalTicks, bpm, tpq) + 2.0
         val out = FloatArray((total * RATE).toInt() + 1)
         val random = Random(1)
-        for (e in score.events) {
-            if (e.isRest) continue
-            val start = (secondsOf(e.startTick, bpm, tpq) * RATE).toInt()
-            val length = secondsOf(e.durationTicks, bpm, tpq)
-            // chords are a bit softer per note so they do not get much louder than single notes;
-            // the accompaniment in the bass clef a bit softer than the melody
-            val bass = score.staves.getOrNull(e.staffIndex)?.clef == Clef.BASS
-            val gain = 0.32f / (1 + 0.15f * (e.pitches.size - 1)) * (if (bass) 0.7f else 1f)
-            for (p in e.pitches) {
-                when (instrument) {
-                    Instrument.GRAND_PIANO -> piano(out, start, length, p, gain, bank)
-                    Instrument.ELECTRIC_PIANO -> electricPiano(out, start, length, p, gain)
-                    Instrument.ORGAN -> organ(out, start, length, p, gain)
-                    Instrument.HARP -> harp(out, start, length, p, gain, random)
-                }
+        for (n in notes(score)) {
+            val start = (secondsOf(n.startTick, bpm, tpq) * RATE).toInt()
+            val length = secondsOf(n.endTick - n.startTick, bpm, tpq)
+            when (instrument) {
+                Instrument.GRAND_PIANO -> piano(out, start, length, n.pitch, n.gain, bank)
+                Instrument.ELECTRIC_PIANO -> electricPiano(out, start, length, n.pitch, n.gain)
+                Instrument.ORGAN -> organ(out, start, length, n.pitch, n.gain)
+                Instrument.HARP -> harp(out, start, length, n.pitch, n.gain, random)
             }
         }
         val withRoom = if (instrument == Instrument.ORGAN) out else reverb(out)
         normalize(withRoom)
         return withRoom
+    }
+
+    private class Note(val pitch: Int, val startTick: Int, var endTick: Int, val gain: Float)
+
+    /**
+     * The notes to strike. A tied note ([MusicEvent.holds]) is not struck again: the note of
+     * the same pitch that has just ended is lengthened instead.
+     */
+    private fun notes(score: Score): List<Note> {
+        val notes = ArrayList<Note>()
+        val sounding = HashMap<Int, Note>() // pitch -> latest note of that pitch
+        for (e in score.events.sortedBy { it.startTick }) {
+            if (e.isRest) continue
+            // chords are a bit softer per note so they do not get much louder than single notes;
+            // the accompaniment in the bass clef a bit softer than the melody
+            val bass = score.staves.getOrNull(e.staffIndex)?.clef == Clef.BASS
+            val gain = 0.32f / (1 + 0.15f * (e.pitches.size - 1)) * (if (bass) 0.7f else 1f)
+            for (p in e.pitches) {
+                val previous = sounding[p]
+                // the tied note must follow right after (a little slack for timing corrections)
+                if (p in e.holds && previous != null && abs(previous.endTick - e.startTick) <= score.ticksPerQuarter / 4) {
+                    previous.endTick = maxOf(previous.endTick, e.endTick)
+                } else {
+                    val n = Note(p, e.startTick, e.endTick, gain)
+                    notes += n
+                    sounding[p] = n
+                }
+            }
+        }
+        return notes
     }
 
     /** A small room (Schroeder reverb: parallel damped combs, then allpasses), mixed in lightly. */

@@ -160,7 +160,7 @@ object StaffDetector {
         val thr = maxP * 0.25
 
         // candidate lines = groups of neighboring rows above the threshold
-        data class Cand(val y: Double, val strongestRow: Int)
+        data class Cand(val y: Double, val strongestRow: Int, val strength: Double)
         val cands = ArrayList<Cand>()
         var y = 0
         while (y < h) {
@@ -173,7 +173,7 @@ object StaffDetector {
                 if (profile[y] > profile[strongest]) strongest = y
                 y++
             }
-            cands += Cand(sum / wsum, strongest)
+            cands += Cand(sum / wsum, strongest, profile[strongest].toDouble())
         }
 
         // five candidates with (roughly) equal spacing form a staff
@@ -195,6 +195,15 @@ object StaffDetector {
                 if (bestJ < 0) break
                 chosen += bestJ
                 cur = bestJ
+            }
+            // a beam right above (or below) a staff can look like a sixth line: the five longest
+            // neighbouring lines win (a beam is much shorter than a staff line)
+            while (chosen.size == 5) {
+                val last = chosen.last()
+                val next = (last + 1 until cands.size).firstOrNull { j -> abs(cands[j].y - cands[last].y - d) <= 0.3 * d } ?: break
+                if (cands[next].strength <= cands[chosen[0]].strength) break
+                chosen.removeAt(0)
+                chosen += next
             }
             if (chosen.size == 5) {
                 val startX = longestRunMid[cands[chosen[2]].strongestRow]
