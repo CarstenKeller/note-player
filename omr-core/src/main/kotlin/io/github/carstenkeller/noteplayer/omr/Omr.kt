@@ -15,6 +15,7 @@ import kotlin.math.roundToInt
  * time signatures, tuplets, ties, multiple voices per staff, repeats or lyrics.
  */
 object Omr {
+    private const val SAUVOLA_K = 0.2
     /** Debug aid: "x0,y0,x1,y1" in OMR_DEBUG_REGION prints why holes in that region were rejected. */
     private val DEBUG_REGION = System.getenv("OMR_DEBUG_REGION")?.split(",")?.map { it.trim().toInt() }
 
@@ -43,12 +44,13 @@ object Omr {
     fun recognize(input: GrayImage, maxSide: Int = 2400): RecognitionResult {
         val warnings = ArrayList<String>()
         var gray = input.downscaled(maxSide)
-        val bin0 = Binarizer.sauvola(gray, max(31, min(gray.width, gray.height) / 15))
+        // a low k keeps thin, light-gray staff lines and stems of photographed pages
+        val bin0 = Binarizer.sauvola(gray, max(31, min(gray.width, gray.height) / 15), k = SAUVOLA_K)
         val m0 = StaffDetector.metrics(bin0)
             ?: return empty(gray, 0.0, 0.0, "Auf dem Bild wurden keine Notenlinien gefunden.")
-        val skew = StaffDetector.estimateSkew(bin0, m0.interline)
+        val skew = StaffDetector.estimateSkew(bin0, m0.interline, m0.lineThickness)
         if (abs(skew) >= 0.1) gray = gray.rotated(-skew)
-        val bin = Binarizer.sauvola(gray, max(31, (m0.interline * 5).toInt()))
+        val bin = Binarizer.sauvola(gray, max(31, (m0.interline * 5).toInt()), k = SAUVOLA_K)
         val m = StaffDetector.metrics(bin) ?: m0
         val d = m.interline
         if (d < 7) warnings += "Die Notenlinien sind sehr klein abgebildet – ein näheres Foto verbessert die Erkennung."

@@ -80,9 +80,11 @@ object StaffDetector {
     }
 
     /** Estimates the page rotation in degrees (positive = lines fall to the right). */
-    fun estimateSkew(bin: BinaryImage, interline: Double): Double {
-        // only pixels in longer horizontal runs: staff lines dominate, text is ignored
+    fun estimateSkew(bin: BinaryImage, interline: Double, lineThickness: Int = 2): Double {
+        // only thin pixels in longer horizontal runs: staff lines dominate; text is ignored, and
+        // so are thick dark areas such as the table around a photographed page
         val minRun = max(8, (interline * 2).toInt())
+        val thin = max(2, 2 * lineThickness + 1)
         val xs = ArrayList<Int>()
         val ys = ArrayList<Int>()
         for (y in 0 until bin.height) {
@@ -94,7 +96,10 @@ object StaffDetector {
                 while (x < bin.width && bin.data[row + x]) x++
                 if (x - start >= minRun / 2) {
                     var i = start
-                    while (i < x) { xs += i; ys += y; i += 2 }
+                    while (i < x) {
+                        if (!bin[i, y - thin] && !bin[i, y + thin]) { xs += i; ys += y }
+                        i += 2
+                    }
                 }
             }
         }
