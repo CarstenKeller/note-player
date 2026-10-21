@@ -1,5 +1,6 @@
 package io.github.carstenkeller.noteplayer.omr
 
+import kotlin.math.abs
 import kotlin.math.roundToInt
 
 /**
@@ -23,8 +24,13 @@ object Timing {
         val bounds = starts.map { it.value } + end
         val lengths = (0 until starts.size).map { bounds[it + 1] - bounds[it] }
         if (lengths.size < 3) return events to systems
-        val typical = lengths.sorted()[lengths.size / 2]
-        if (typical <= 0) return events to systems
+        val median = lengths.sorted()[lengths.size / 2]
+        if (median <= 0) return events to systems
+        // time signatures are not read; when misread notes make most measures a bit too long,
+        // the median is still close to a common measure length (2/4, 3/4 or 6/8, 4/4, 6/4)
+        val tpq = Score.TPQ
+        val common = intArrayOf(2 * tpq, 3 * tpq, 4 * tpq, 6 * tpq)
+        val typical = common.firstOrNull { abs(median - it) <= 0.15 * it } ?: median
 
         // a missed barline makes two measures look like one long measure; such a "measure" is
         // also about twice as wide on the page, so the allowed length follows the width

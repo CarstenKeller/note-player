@@ -109,7 +109,8 @@ class SyntheticScore(val width: Int = 1600, val height: Int = 900, val space: Do
     /** A rough treble clef: tall stroke with a loop around the G line. */
     fun trebleClef(x: Double, bottomLine: Double) {
         g.stroke = BasicStroke((space * 0.25).toFloat())
-        g.draw(Line2D.Double(x, bottomLine - 6.5 * space, x, bottomLine + 1.5 * space))
+        // the spine of a real treble clef is slanted
+        g.draw(Line2D.Double(x - 0.4 * space, bottomLine + 1.5 * space, x + 0.6 * space, bottomLine - 6.5 * space))
         g.draw(Ellipse2D.Double(x - 0.8 * space, bottomLine - 2.2 * space, 1.6 * space, 1.8 * space))
     }
 

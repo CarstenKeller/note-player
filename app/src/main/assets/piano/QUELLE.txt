@@ -1,9 +1,12 @@
 Klavier-Samples / piano samples
 
-Quelle: npm-Paket "tonejs-instrument-piano-ogg" 1.1.0
-        (Repository: https://github.com/Makefully-Studios/tonejs-instruments)
+Salamander Grand Piano V3, Autor: Alexander Holm
+Quelle: https://archive.org/details/SalamanderGrandPianoV3
+        bezogen über das npm-Paket "@audio-samples/piano-velocity8" 1.0.5
+        (https://github.com/darosh/samples-piano)
 Lizenz der Samples: Creative Commons Attribution 3.0 (CC BY 3.0)
         https://creativecommons.org/licenses/by/3.0/
 
-Änderungen: Auswahl von 29 Tönen (C, D#, F#, A je Oktave und C8), auf 4 Sekunden
-gekürzt mit Ausblendung, auf 32 kHz umgerechnet und neu als Ogg Vorbis kodiert.
+Änderungen: mittlere Anschlagstärke (Velocity-Stufe 8), 30 Töne (C, D#, F#, A je Oktave
+und C8), auf 6 Sekunden gekürzt mit Ausblendung, auf Mono und 32 kHz umgerechnet und neu
+als Ogg Vorbis kodiert.

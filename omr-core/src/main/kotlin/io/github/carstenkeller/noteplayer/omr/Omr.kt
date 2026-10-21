@@ -92,11 +92,20 @@ object Omr {
             val own = headerGlyphs.filter { headerStaff[it.id] == si }.sortedBy { it.x0 }
             // half/whole notes and notes with a stem are never part of the clef/key/time signature
             val notes = heads.filter { it.staff == si && (it.hollow || it.stemDir != 0) }.map { it.box }
-            val header = readHeader(aggressive, staff, own, notes, d, headerUsed)
-            clefs[si] = header.first
+            // the clef is read from the picture with its staff lines: on small pictures the thin
+            // strokes of a clef do not survive the line removal
+            val lowerOfPair = si > 0 && systemOf[si - 1] == systemOf[si] && (si + 1 >= staves.size || systemOf[si + 1] != systemOf[si])
+            val (clef, clefRight) = classifyClef(bin, staff, d, m.lineThickness, lowerOfPair)
+            val header = readHeader(aggressive, staff, own, notes, clefRight, d, headerUsed)
+            clefs[si] = clef
             keys[si] = header.second
             headerEnd[si] = header.third
         }
+        // all staves of a piece normally share one key signature: a staff where none was found
+        // takes the key that most staves show
+        val keyVotes = keys.toList().groupingBy { it }.eachCount()
+        val (commonKey, votes) = keyVotes.maxBy { it.value }
+        if (commonKey != 0 && votes * 2 > keys.size) for (i in keys.indices) if (keys[i] == 0) keys[i] = commonKey
         heads.removeAll { it.cx < headerEnd[it.staff] }
         val consumed = HashSet<Int>()
         for (g in headerGlyphs) if (headerUsed[g.id]) consumed += g.members
@@ -124,6 +133,21 @@ object Omr {
                 }
             }
             if (any) used[c.id] = true
+        }
+        // barlines that touch a tie or a note are part of a bigger component; find them as thin
+        // vertical lines running exactly from the top to the bottom line, not ending at a head
+        for ((si, s) in staves.withIndex()) {
+            var x = max(s.left, headerEnd[si].roundToInt())
+            while (x <= s.right) {
+                if (!spansStaff(aggressive, s, x, d)) { x++; continue }
+                val start = x
+                while (x <= s.right && spansStaff(aggressive, s, x, d)) x++
+                val cx = (start + x - 1) / 2.0
+                val stem = heads.any { h ->
+                    h.staff == si && cx >= h.box.left - 0.4 * d && cx <= h.box.right + 0.4 * d
+                }
+                if (x - start <= 0.6 * d && !stem) barlines[si] += cx
+            }
         }
         for (b in barlines) {
             b.sort()
@@ -326,6 +350,18 @@ object Omr {
         return best >= 6
     }
 
+    /** True if column [x] is inked from the top to the bottom line of the staff (1 px gaps allowed). */
+    private fun spansStaff(img: BinaryImage, s: Staff, x: Int, d: Double): Boolean {
+        val fx = x.toDouble()
+        val top = (s.top(fx) + 0.15 * d).roundToInt()
+        val bottom = (s.bottom(fx) - 0.15 * d).roundToInt()
+        var gap = 0
+        for (y in top..bottom) {
+            if (img[x, y]) gap = 0 else if (++gap > 1) return false
+        }
+        return true
+    }
+
     private fun alignmentAnchors(s: Staff, bars: List<Double>, r: Staff, refBars: List<Double>, d: Double): List<Pair<Double, Double>> {
         val out = arrayListOf(s.left.toDouble() to r.left.toDouble())
         for (b in bars) {
@@ -503,8 +539,12 @@ object Omr {
                 if (hw > maxHole || hh > maxHole) continue
                 if ((hw < 0.2 * d || hw > 1.3 * d || hh < 0.15 * d || hh > 0.95 * d) && reject("size ${hw / d} ${hh / d}")) continue
                 // note head holes are elliptic; rectangular holes are gaps between stems and lines
-                if ((area < 0.35 * hw * hh || area > 0.88 * hw * hh || area > maxPixels) && reject("fill")) continue
-                if (straightSide(pixels, area, w, hy0, hh) && reject("straight")) continue
+                // (a hole of only a few pixels is square at this resolution)
+                val maxFill = if (hh <= 7 && hw <= 9) 1.0 else 0.88
+                if ((area < 0.35 * hw * hh || area > maxFill * hw * hh || area > maxPixels) && reject("fill")) continue
+                // on low-resolution pictures a note hole is only a few pixels high and every
+                // edge looks straight; there the check would remove real notes
+                if (hh > 7 && straightSide(pixels, area, w, hy0, hh) && reject("straight")) continue
                 val cx = (hx0 + hx1) / 2
                 val cy = (hy0 + hy1) / 2
                 val limit = (0.7 * d).roundToInt()
@@ -524,6 +564,14 @@ object Omr {
                 val longLeft = leftRun.second - leftRun.first > 1.8 * d
                 val longRight = rightRun.second - rightRun.first > 1.8 * d
                 if (longLeft && longRight && reject("accidental")) continue
+                // walls right next to the hole: a gap between a stem and a barline (bounded by two
+                // staff lines) has long straight walls on both sides, a note head has short ones
+                // (stacked chord heads also have long walls, but their holes are narrower)
+                val wallLeft = verticalExtent(agg, hx0 - 1, cy, d)
+                val wallRight = verticalExtent(agg, hx1 + 1, cy, d)
+                if (hw >= 0.8 * d && wallLeft.second - wallLeft.first > 1.5 * d &&
+                    wallRight.second - wallRight.first > 1.5 * d && reject("between strokes")
+                ) continue
                 if (dbg) println("DBG hole $hx0..$hx1 x $hy0..$hy1 accepted")
                 val box = Box(left.toFloat(), top.toFloat(), right.toFloat(), bottom.toFloat())
                 out += Head(box.centerX.toDouble(), box.centerY.toDouble(), box, hollow = true)
@@ -763,7 +811,77 @@ object Omr {
     }
 
     /** Returns clef, key (fifths) and the x coordinate where the music starts. */
-    private fun readHeader(img: BinaryImage, staff: Staff, own: List<Component>, notes: List<Box>, d: Double, used: BooleanArray): Triple<Clef, Int, Double> {
+    /**
+     * Treble clefs reach well above and below the staff, an alto (C) clef has a heavy bar across
+     * the whole staff, a bass clef stays inside. Without a recognizable clef the lower staff of a
+     * piano system is taken as bass, any other as treble.
+     */
+    private fun classifyClef(bin: BinaryImage, s: Staff, d: Double, t: Int, lowerOfPair: Boolean): Pair<Clef, Int?> {
+        var right: Int? = null
+        fun result(c: Clef) = c to right
+        // locate the clef: the first wide inked area after the staff start (barlines and the
+        // brace are narrow or lie before it)
+        val scanEnd = (s.left + 4 * d).roundToInt()
+        val colInk = IntArray(scanEnd - s.left + 1) { i ->
+            val x = s.left + i
+            val tx = s.top(x.toDouble())
+            val bx = s.bottom(x.toDouble())
+            var n = 0
+            var rows = 0
+            for (y in tx.roundToInt()..bx.roundToInt()) {
+                if ((0 until 5).any { abs(y - s.lineY(it, x.toDouble())) <= t }) continue
+                rows++
+                if (bin[x, y]) n++
+            }
+            // barlines and brackets fill the whole staff height: not part of the clef
+            if (n >= 0.85 * rows) 0 else n
+        }
+        val minInk = max(2.0, 0.25 * d)
+        var x0 = -1
+        var x1 = -1
+        var i = 0
+        while (i < colInk.size) {
+            if (colInk[i] < minInk) { i++; continue }
+            val start = i
+            while (i < colInk.size && colInk[i] > 0) i++
+            if (i - start >= 0.4 * d) { x0 = s.left + start; x1 = s.left + minOf(i - 1, start + (3 * d).toInt()); break }
+        }
+        val fallbackClef = if (lowerOfPair) Clef.BASS else Clef.TREBLE
+        if (x0 < 0) return result(fallbackClef)
+        right = x1
+        val mid = (x0 + x1) / 2.0
+        val top = s.top(mid)
+        val bottom = s.bottom(mid)
+        fun ink(ya: Double, yb: Double, skipLines: Boolean = false): Int {
+            var n = 0
+            for (y in ya.roundToInt()..yb.roundToInt()) {
+                if (skipLines && (0 until 5).any { abs(y - s.lineY(it, mid)) <= t }) continue
+                for (x in x0..x1) if (bin[x, y]) n++
+            }
+            return n
+        }
+        val area = d * d
+        val inside = ink(top, bottom, skipLines = true)
+        if (inside < 0.3 * area) return result(fallbackClef)
+        val above = ink(top - 1.8 * d, top - 0.4 * d)
+        val below = ink(bottom + 0.4 * d, bottom + 1.8 * d)
+        // only the treble clef reaches below the bottom line (its tail); fonts differ above
+        if (below >= 0.06 * area || (above >= 0.15 * area && below >= 0.02 * area)) return result(Clef.TREBLE)
+        // a heavy vertical bar over the whole staff height: C clef
+        val thick = max(2, (0.3 * d).roundToInt())
+        for (x in x0..x1) {
+            var run = 0
+            var best = 0
+            for (y in (top - 0.3 * d).roundToInt()..(bottom + 0.3 * d).roundToInt()) {
+                run = if ((0 until thick).all { bin[x + it, y] }) run + 1 else 0
+                best = max(best, run)
+            }
+            if (best >= 3.7 * d && best <= 4.8 * d) return result(Clef.ALTO)
+        }
+        return result(Clef.BASS)
+    }
+
+    private fun readHeader(img: BinaryImage, staff: Staff, own: List<Component>, notes: List<Box>, clefRight: Int?, d: Double, used: BooleanArray): Triple<Clef, Int, Double> {
         fun holdsNote(c: Component) = notes.any { it.centerX >= c.x0 && it.centerX <= c.x1 && it.centerY >= c.y0 && it.centerY <= c.y1 }
         val left = staff.left
         var cursor = left + 0.5 * d
@@ -809,10 +927,20 @@ object Omr {
             }
         }
 
+        // pieces of the clef that the glyph merging missed
+        if (clefRight != null && clefRight > cursor && clefRight < left + 4 * d) {
+            for (c in own) if (c.x1 <= clefRight + 1 && c.x0 >= left - 1 && !holdsNote(c)) used[c.id] = true
+            cursor = max(cursor, clefRight.toDouble())
+            for (c in own) {
+                if (c.x0 > cursor && c.x0 < cursor + 0.8 * d && max(c.width, c.height) < 0.65 * d) {
+                    cursor = max(cursor, c.x1.toDouble()); used[c.id] = true
+                }
+            }
+        }
         var sharps = 0
         var flats = 0
         for (c in own.filter { it.x0 >= cursor - 1 }) {
-            if (c.x0 >= cursor + 1.6 * d) break
+            if (c.x0 >= cursor + 2.2 * d) break
             if (max(c.width, c.height) < 0.6 * d) { cursor = max(cursor, c.x1.toDouble()); continue } // specks, clef dots
             if (!accidentalLike(c, d) || holdsNote(c)) break
             if (classifyAccidental(img, c) < 0) flats++ else sharps++
@@ -925,6 +1053,9 @@ object Omr {
             if (count > 0) sideCount = min(sideCount, count)
             }
             if (sideCount != Int.MAX_VALUE) best = max(best, sideCount)
+        }
+        if (DEBUG_REGION?.let { h.cx >= it[0] && h.cx <= it[2] && h.cy >= it[1] && h.cy <= it[3] } == true) {
+            println("DBG beams head=(${h.cx.toInt()},${h.cy.toInt()}) stemX=${h.stemX} tip=${h.stemTip} dir=${h.stemDir} ya=$ya yb=$yb -> $best")
         }
         return min(best, 3)
     }

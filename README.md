@@ -125,7 +125,7 @@ Mindestversion: Android 8.0 (API 26).
 
 ## Lizenzen
 
-Die Klavier-Samples in `app/src/main/assets/piano` stammen aus dem npm-Paket
-`tonejs-instrument-piano-ogg` 1.1.0 (https://github.com/Makefully-Studios/tonejs-instruments)
-und stehen unter **CC BY 3.0**. Sie wurden ausgewählt, gekürzt und neu kodiert; Details in
-`app/src/main/assets/piano/QUELLE.txt`.
+Die Klavier-Samples in `app/src/main/assets/piano` sind das **Salamander Grand Piano V3**
+von Alexander Holm (https://archive.org/details/SalamanderGrandPianoV3), Lizenz **CC BY 3.0**,
+bezogen über das npm-Paket `@audio-samples/piano-velocity8`. Sie wurden ausgewählt, gekürzt und
+neu kodiert; Details in `app/src/main/assets/piano/QUELLE.txt`.

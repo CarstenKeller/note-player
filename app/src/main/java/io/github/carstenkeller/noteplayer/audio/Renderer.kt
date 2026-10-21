@@ -1,5 +1,6 @@
 package io.github.carstenkeller.noteplayer.audio
 
+import io.github.carstenkeller.noteplayer.omr.Clef
 import io.github.carstenkeller.noteplayer.omr.Score
 import java.io.File
 import java.io.FileOutputStream
@@ -18,7 +19,7 @@ object Renderer {
     const val RATE = 32_000
 
     /** Damper: how fast a note dies away after its written length, in seconds. */
-    private const val RELEASE = 0.12
+    private const val RELEASE = 0.25
 
     fun secondsOf(ticks: Int, bpm: Int, tpq: Int) = ticks * 60.0 / (bpm * tpq)
 
@@ -31,8 +32,10 @@ object Renderer {
             if (e.isRest) continue
             val start = (secondsOf(e.startTick, bpm, tpq) * RATE).toInt()
             val length = secondsOf(e.durationTicks, bpm, tpq)
-            // chords are a bit softer per note so they do not get much louder than single notes
-            val gain = 0.32f / (1 + 0.15f * (e.pitches.size - 1))
+            // chords are a bit softer per note so they do not get much louder than single notes;
+            // the accompaniment in the bass clef a bit softer than the melody
+            val bass = score.staves.getOrNull(e.staffIndex)?.clef == Clef.BASS
+            val gain = 0.32f / (1 + 0.15f * (e.pitches.size - 1)) * (if (bass) 0.7f else 1f)
             for (p in e.pitches) {
                 when (instrument) {
                     Instrument.GRAND_PIANO -> piano(out, start, length, p, gain, bank)
@@ -42,8 +45,44 @@ object Renderer {
                 }
             }
         }
-        normalize(out)
-        return out
+        val withRoom = if (instrument == Instrument.ORGAN) out else reverb(out)
+        normalize(withRoom)
+        return withRoom
+    }
+
+    /** A small room (Schroeder reverb: parallel damped combs, then allpasses), mixed in lightly. */
+    private fun reverb(dry: FloatArray, wet: Float = 0.16f): FloatArray {
+        val combDelays = intArrayOf(1116, 1188, 1277, 1356).map { it * RATE / 44_100 }
+        val feedback = 0.80f
+        val damp = 0.25f
+        val sum = FloatArray(dry.size)
+        for (delay in combDelays) {
+            val buf = FloatArray(delay)
+            var idx = 0
+            var low = 0f
+            for (i in dry.indices) {
+                val y = buf[idx]
+                low = y * (1 - damp) + low * damp
+                buf[idx] = dry[i] + low * feedback
+                idx = if (idx + 1 == delay) 0 else idx + 1
+                sum[i] += y
+            }
+        }
+        var signal = sum
+        for (delay in intArrayOf(556, 341).map { it * RATE / 44_100 }) {
+            val buf = FloatArray(delay)
+            var idx = 0
+            val out = FloatArray(signal.size)
+            for (i in signal.indices) {
+                val b = buf[idx]
+                val y = -signal[i] * 0.5f + b
+                buf[idx] = signal[i] + b * 0.5f
+                idx = if (idx + 1 == delay) 0 else idx + 1
+                out[i] = y
+            }
+            signal = out
+        }
+        return FloatArray(dry.size) { dry[it] + wet * signal[it] / combDelays.size }
     }
 
     private fun frequency(pitch: Int) = 440.0 * 2.0.pow((pitch - 69) / 12.0)

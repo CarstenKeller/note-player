@@ -304,19 +304,40 @@ object StaffDetector {
         val out = bin.copy()
         for (staff in staves) {
             val d = staff.space(((staff.left + staff.right) / 2).toDouble())
+            // never thicker than a line plus a little blur and well below a beam's thickness
+            // (about half a staff space), so beams lying on a line are kept
+            val lineThickness = (maxRun - 1) / 2
+            val limit = min(maxRun, max(lineThickness + 2, (0.35 * d).roundToInt()))
             for (x in staff.left..staff.right) {
                 val fx = x.toDouble()
-                val positions = ArrayList<Double>(5 + 2 * ledgerLines)
-                for (l in 0 until 5) positions += staff.lineY(l, fx)
+                for (l in 0 until 5) eraseThinRun(bin, out, x, staff.lineY(l, fx).roundToInt(), limit)
+                // ledger lines are short; a long thin stroke at a ledger position is a beam (on
+                // small pictures a beam is no thicker than a line) and must stay
                 for (k in 1..ledgerLines) {
-                    positions += staff.top(fx) - k * d
-                    positions += staff.bottom(fx) + k * d
+                    for (py in doubleArrayOf(staff.top(fx) - k * d, staff.bottom(fx) + k * d)) {
+                        val y = py.roundToInt()
+                        if (horizontalExtent(bin, x, y, (3 * d).toInt()) <= 3 * d) eraseThinRun(bin, out, x, y, limit)
+                    }
                 }
-                for (py in positions) eraseThinRun(bin, out, x, py.roundToInt(), maxRun)
             }
             // ledger lines stick out a bit beyond notes at the staff ends as well
         }
         return out
+    }
+
+    /** Length of the horizontal ink run through (x, y±1), counted up to [limit] on each side. */
+    private fun horizontalExtent(src: BinaryImage, x: Int, y: Int, limit: Int): Int {
+        val row = when {
+            src[x, y] -> y
+            src[x, y - 1] -> y - 1
+            src[x, y + 1] -> y + 1
+            else -> return 0
+        }
+        var l = 0
+        while (l < limit && src[x - l - 1, row]) l++
+        var r = 0
+        while (r < limit && src[x + r + 1, row]) r++
+        return l + r + 1
     }
 
     private fun eraseThinRun(src: BinaryImage, out: BinaryImage, x: Int, y: Int, maxRun: Int) {
