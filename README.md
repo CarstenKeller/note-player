@@ -90,7 +90,9 @@ Erkannt werden:
 - Bindebögen (Legato) werden ignoriert; zwischen zwei gleich hohen Noten sind sie von
   Haltebögen nicht zu unterscheiden und werden dort wie Haltebögen behandelt
 - Wiederholungen, Volta-Klammern, D.C./D.S.
-- Mehrere Stimmen in einem System
+- Mehrere Stimmen in einer Notenzeile nur teilweise: Stimmen mit Hals nach oben und nach unten
+  sowie ganze Noten unter einer Melodie klingen jeweils in ihrer eigenen Länge; übereinander
+  stehende hohle Köpfe werden dabei manchmal einen Ton daneben gelesen
 - Schlüssel- oder Tonartwechsel mitten in der Zeile
 - Vorschlagsnoten, Verzierungen, Dynamik
 

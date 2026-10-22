@@ -165,4 +165,19 @@ class EngravedScoreTest {
             describe(recognize("rhythm.png")),
         )
     }
+
+    /**
+     * Two voices in one staff: a melody above a held whole-note chord. Each voice keeps its own
+     * length, the melody goes on at its own pace.
+     */
+    @Test
+    fun twoVoicesInOneStaff() {
+        val s = recognize("voices.png")
+        // start/length per event; pitches of the stacked whole notes are not checked here
+        assertEquals(
+            "0/720 0/1920 720/240 960/960 1920/480 1920/1920 2400/480 2880/480 3360/480 3840/1920",
+            s.events.joinToString(" ") { "${it.startTick}/${it.durationTicks}" },
+        )
+        assertEquals(listOf("B4", "C5", "C5", "E5", "D5", "C5", "B4"), s.events.filter { it.durationTicks < 1920 }.map { name(it.pitches.first()) })
+    }
 }

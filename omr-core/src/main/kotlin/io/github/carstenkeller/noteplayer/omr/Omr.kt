@@ -277,7 +277,10 @@ object Omr {
             var colX = Double.NEGATIVE_INFINITY
             for (e in timed) {
                 val x = refX(e.first, e.second.box.centerX.toDouble())
-                if (columns.isEmpty() || x - colX > 0.8 * d) {
+                // a whole note of a second voice is often set a little beside the other voice's
+                // notes; it sounds together with them
+                val whole = e.second.heads.isNotEmpty() && e.second.heads.all { it.hollow && it.stemDir == 0 }
+                if (columns.isEmpty() || x - colX > (if (whole) 2.5 else 0.8) * d) {
                     columns += ArrayList<Pair<Int, Item>>()
                     colX = x
                 }
@@ -1103,6 +1106,13 @@ object Omr {
             val same = when {
                 a.stemDir != 0 && b.stemDir != 0 ->
                     a.stemDir == b.stemDir && abs(a.stemX - b.stemX) <= 0.5 * d && dy <= 4 * d
+                // a whole note next to a black note with a stem belongs to another voice (two
+                // voices in one staff, e.g. a held chord below a melody): it keeps its own
+                // length. Next to a hollow head with a stem it is part of a half-note chord (a
+                // head set beside the stem has no stem of its own); at the same height it is the
+                // same head found twice.
+                ((a.stemDir == 0 && a.hollow && b.stemDir != 0 && !b.hollow) ||
+                    (b.stemDir == 0 && b.hollow && a.stemDir != 0 && !a.hollow)) && dy > 0.4 * d -> false
                 else -> (dx <= 0.6 * d && dy <= 4 * d) || (dx <= 1.5 * d && dy <= 1.2 * d)
             }
             if (same) union(i, j)
