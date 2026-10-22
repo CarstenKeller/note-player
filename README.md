@@ -33,8 +33,8 @@ sich gerade befindet.
   Abspielen bereit; umbenennen und löschen über „⋮“. Beim Öffnen werden die Noten neu erkannt.
 - **Blätter verwalten** (Menü „Blätter“ im Notenbildschirm): weitere Blätter fotografieren oder
   auswählen, ein schlecht erkanntes Blatt neu fotografieren oder durch ein anderes Bild ersetzen,
-  ein Blatt entfernen, ein Blatt teilen (das gespeicherte Foto an eine andere App geben), das
-  Stück umbenennen.
+  ein Blatt entfernen, ein Blatt in der Galerie speichern (Album „Notenspieler“, ab Android 10)
+  oder teilen (das gespeicherte Foto an eine andere App geben), das Stück umbenennen.
 - **Kompakte Bedienleiste**: Abspielen, Stopp und Tempo in einer Zeile; die übrigen Einstellungen
   (Tempo-Regler, Grundtempo, Klang, Anzeige) klappen mit „⚙“ auf und wieder zu.
 - **Notenerkennung direkt auf dem Gerät**: offline, kein Server, kein Konto.

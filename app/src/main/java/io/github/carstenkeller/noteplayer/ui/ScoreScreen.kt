@@ -6,6 +6,13 @@ import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.gestures.detectTransformGestures
 import android.content.Context
+import android.widget.Toast
+import androidx.compose.runtime.rememberCoroutineScope
+import io.github.carstenkeller.noteplayer.GalleryExport
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import android.content.Intent
 import android.net.Uri
 import androidx.compose.ui.platform.LocalContext
@@ -95,6 +102,7 @@ fun ScoreScreen(
 ) {
     val score = state.score(playback)
     val context = LocalContext.current
+    val scope = rememberCoroutineScope()
     val page = remember(state.page) { state.page.asImageBitmap() }
     val tiles = remember(state.page) { tiles(state.page) }
     var showRecognized by rememberSaveable { mutableStateOf(true) }
@@ -132,6 +140,11 @@ fun ScoreScreen(
                 SheetMenu(
                     sheets = state.piece.sheets.size,
                     onShareSheet = { i -> shareSheet(context, state.piece.sheets[i]) },
+                    onSaveSheet = { i ->
+                        val sheets = state.piece.sheets
+                        val name = if (sheets.size > 1) "${state.piece.name} - Blatt ${i + 1}" else state.piece.name
+                        saveSheet(context, scope, sheets[i], name)
+                    },
                     onAddPages = onAddPages,
                     onReplaceSheet = onReplaceSheet,
                     onRemoveSheet = onRemoveSheet,
@@ -429,6 +442,7 @@ private fun SheetMenu(
     onRemoveSheet: (Int) -> Unit,
     onRename: (String) -> Unit,
     onShareSheet: (Int) -> Unit,
+    onSaveSheet: (Int) -> Unit,
 ) {
     // which sheet the next photo or picture replaces; null: it is added at the end
     var replacing by rememberSaveable { mutableStateOf<Int?>(null) }
@@ -448,6 +462,7 @@ private fun SheetMenu(
                 val label = if (sheets > 1) "Blatt ${i + 1}" else "Blatt"
                 DropdownMenuItem(text = { Text("$label neu fotografieren") }, onClick = { menu = false; replacing = i; sources.takePhoto() })
                 DropdownMenuItem(text = { Text("$label durch Bild ersetzen") }, onClick = { menu = false; replacing = i; sources.pickImages() })
+                DropdownMenuItem(text = { Text("$label in Galerie speichern") }, onClick = { menu = false; onSaveSheet(i) })
                 DropdownMenuItem(text = { Text("$label teilen") }, onClick = { menu = false; onShareSheet(i) })
                 if (sheets > 1) DropdownMenuItem(text = { Text("$label entfernen") }, onClick = { menu = false; onRemoveSheet(i) })
             }
@@ -516,4 +531,21 @@ private fun shareSheet(context: Context, sheet: Sheet) {
         .putExtra(Intent.EXTRA_STREAM, uri)
         .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
     context.startActivity(Intent.createChooser(send, "Blatt teilen"))
+}
+
+/** Copies the saved photo of [sheet] into the gallery (album „Notenspieler“) and says how it went. */
+private fun saveSheet(context: Context, scope: CoroutineScope, sheet: Sheet, name: String) {
+    if (!GalleryExport.supported) {
+        Toast.makeText(context, "Speichern in der Galerie geht erst ab Android 10. Bitte „Blatt teilen“ verwenden.", Toast.LENGTH_LONG).show()
+        return
+    }
+    scope.launch {
+        val message = try {
+            withContext(Dispatchers.IO) { GalleryExport.save(context, sheet, name) }
+            "In der Galerie gespeichert (Album „${GalleryExport.ALBUM}“)"
+        } catch (e: Exception) {
+            "Speichern fehlgeschlagen: ${e.message}"
+        }
+        Toast.makeText(context, message, Toast.LENGTH_LONG).show()
+    }
 }
