@@ -17,7 +17,24 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Row
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.text.style.TextOverflow
+import io.github.carstenkeller.noteplayer.Piece
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.style.TextAlign
@@ -25,7 +42,15 @@ import androidx.compose.ui.unit.dp
 
 @Composable
 /** [working]: what is being done right now, or null. */
-fun StartScreen(working: String?, error: String?, onOpen: (List<Uri>) -> Unit) {
+fun StartScreen(
+    working: String?,
+    error: String?,
+    pieces: List<Piece>,
+    onOpen: (List<Uri>) -> Unit,
+    onOpenPiece: (Piece) -> Unit,
+    onRename: (Piece, String) -> Unit,
+    onDelete: (Piece) -> Unit,
+) {
     val sources = rememberSourcePickers(onOpen)
 
     Surface(Modifier.fillMaxSize()) {
@@ -60,6 +85,11 @@ fun StartScreen(working: String?, error: String?, onOpen: (List<Uri>) -> Unit) {
             if (error != null) {
                 Text(error, color = MaterialTheme.colorScheme.error, textAlign = TextAlign.Center)
             }
+            if (pieces.isNotEmpty() && working == null) {
+                Spacer(Modifier.height(8.dp))
+                Text("Gespeicherte Stücke", style = MaterialTheme.typography.titleMedium, modifier = Modifier.fillMaxWidth())
+                for (piece in pieces) PieceRow(piece, onOpenPiece, onRename, onDelete)
+            }
             Spacer(Modifier.height(8.dp))
             Text("Tipps für gute Ergebnisse", style = MaterialTheme.typography.titleMedium)
             Text(
@@ -67,7 +97,7 @@ fun StartScreen(working: String?, error: String?, onOpen: (List<Uri>) -> Unit) {
                     "• Senkrecht von oben fotografieren, Blatt möglichst flach und gleichmäßig beleuchtet.\n" +
                     "• Lieber eine halbe Seite scharf als eine ganze Seite unscharf.\n" +
                     "• Mehrere Blätter: ein Foto pro Blatt. Mehrere Bilder in der Reihenfolge des " +
-                    "Stücks antippen, oder nach dem ersten Blatt mit „+ Blatt“ weitere hinzufügen.\n" +
+                    "Stücks antippen, oder nach dem ersten Blatt über „Blätter“ weitere hinzufügen.\n" +
                     "• Erkannt werden u. a. Violin-/Bassschlüssel, Vorzeichen, Ganze bis Sechzehntel, " +
                     "Punktierungen, Akkorde, einfache Pausen und Klaviersysteme.\n" +
                     "• Nicht erkannt werden u. a. Taktart, Triolen, Wiederholungen und " +
@@ -78,5 +108,38 @@ fun StartScreen(working: String?, error: String?, onOpen: (List<Uri>) -> Unit) {
                 style = MaterialTheme.typography.bodyMedium,
             )
         }
+    }
+}
+
+/** A saved piece: tap to open; rename or delete from its menu. */
+@Composable
+private fun PieceRow(piece: Piece, onOpen: (Piece) -> Unit, onRename: (Piece, String) -> Unit, onDelete: (Piece) -> Unit) {
+    var menu by remember { mutableStateOf(false) }
+    var renaming by rememberSaveable(piece.id) { mutableStateOf(false) }
+    var deleting by rememberSaveable(piece.id) { mutableStateOf(false) }
+    Row(Modifier.fillMaxWidth().clickable { onOpen(piece) }.padding(vertical = 6.dp), verticalAlignment = Alignment.CenterVertically) {
+        Column(Modifier.weight(1f)) {
+            Text(piece.name, style = MaterialTheme.typography.bodyLarge, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            val date = SimpleDateFormat("dd.MM.yyyy", Locale.GERMANY).format(Date(piece.created))
+            val sheets = if (piece.sheets.size == 1) "1 Blatt" else "${piece.sheets.size} Blätter"
+            Text("$sheets · $date", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        }
+        Box {
+            TextButton(onClick = { menu = true }) { Text("⋮") }
+            DropdownMenu(expanded = menu, onDismissRequest = { menu = false }) {
+                DropdownMenuItem(text = { Text("Umbenennen") }, onClick = { menu = false; renaming = true })
+                DropdownMenuItem(text = { Text("Löschen") }, onClick = { menu = false; deleting = true })
+            }
+        }
+    }
+    if (renaming) RenameDialog(piece.name, onDismiss = { renaming = false }, onConfirm = { renaming = false; onRename(piece, it) })
+    if (deleting) {
+        AlertDialog(
+            onDismissRequest = { deleting = false },
+            title = { Text("„${piece.name}“ löschen?") },
+            text = { Text("Die gespeicherten Bilder dieses Stücks werden aus der App entfernt. Die Originale in der Galerie bleiben erhalten.") },
+            confirmButton = { TextButton(onClick = { deleting = false; onDelete(piece) }) { Text("Löschen") } },
+            dismissButton = { TextButton(onClick = { deleting = false }) { Text("Abbrechen") } },
+        )
     }
 }

@@ -26,6 +26,7 @@ class MainActivity : ComponentActivity() {
             MaterialTheme(colorScheme = lightColorScheme(primary = Color(0xFF3E2C73), secondary = Color(0xFFE8833A))) {
                 val screen by vm.screen.collectAsStateWithLifecycle()
                 val playback by vm.playback.collectAsStateWithLifecycle()
+                val pieces by vm.pieces.collectAsStateWithLifecycle()
                 when (val s = screen) {
                     is ScreenState.Ready -> {
                         BackHandler { vm.back() }
@@ -41,12 +42,19 @@ class MainActivity : ComponentActivity() {
                             onSeek = vm::seekTo,
                             onBack = vm::back,
                             onAddPages = vm::addPages,
+                            onReplaceSheet = vm::replaceSheet,
+                            onRemoveSheet = vm::removeSheet,
+                            onRename = { name -> vm.rename(s.piece, name) },
                         )
                     }
                     else -> StartScreen(
                         working = (s as? ScreenState.Working)?.message,
                         error = (s as? ScreenState.Failed)?.message,
-                        onOpen = vm::open,
+                        pieces = pieces,
+                        onOpen = { uris: List<Uri> -> vm.open(uris) },
+                        onOpenPiece = { piece -> vm.open(piece) },
+                        onRename = vm::rename,
+                        onDelete = vm::delete,
                     )
                 }
             }

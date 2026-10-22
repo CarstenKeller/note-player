@@ -9,7 +9,7 @@ sich gerade befindet.
 - **Notenblatt fotografieren** (Kamera-App des Geräts) oder **Bilder auswählen** (Galerie / Dateien).
   Bilder können auch über „Teilen“ aus einer anderen App an den Notenspieler geschickt werden.
 - **Mehrere Blätter**: ein Foto pro Blatt. Dafür mehrere Bilder in der Reihenfolge des Stücks
-  auswählen (oder mehrere auf einmal teilen), oder nach dem ersten Blatt mit „+ Blatt“ weitere
+  auswählen (oder mehrere auf einmal teilen), oder nach dem ersten Blatt über „Blätter“ weitere
   Blätter fotografieren oder auswählen. Jedes Blatt wird für sich erkannt (eigene Größe und
   Schräglage). Danach werden die Blätter untereinander angezeigt und nacheinander gespielt.
   Ein Haltebogen über das Blattende hinaus wird nicht erkannt.
@@ -28,6 +28,14 @@ sich gerade befindet.
     (Linienabstand mindestens etwa 8 Pixel). Gedacht ist das für Bildschirmaufnahmen; ein mit
     der Kamera abgefilmter Bildschirm (bewegtes, schräges, unscharfes Bild) wird nicht
     unterstützt.
+- **Gespeicherte Stücke**: Jedes geöffnete Stück wird automatisch gespeichert (Kopien der Bilder
+  bzw. Videos in der App, dazu das Grundtempo) und steht auf dem Startbildschirm zum erneuten
+  Abspielen bereit; umbenennen und löschen über „⋮“. Beim Öffnen werden die Noten neu erkannt.
+- **Blätter verwalten** (Menü „Blätter“ im Notenbildschirm): weitere Blätter fotografieren oder
+  auswählen, ein schlecht erkanntes Blatt neu fotografieren oder durch ein anderes Bild ersetzen,
+  ein Blatt entfernen, das Stück umbenennen.
+- **Kompakte Bedienleiste**: Abspielen, Stopp und Tempo in einer Zeile; die übrigen Einstellungen
+  (Tempo-Regler, Grundtempo, Klang, Anzeige) klappen mit „⚙“ auf und wieder zu.
 - **Notenerkennung direkt auf dem Gerät**: offline, kein Server, kein Konto.
 - **Wiedergabe** mit wählbarem Klang: Flügel (Aufnahmen eines echten Klaviers, Standard),
   E-Piano, Orgel, Harfe. Das Stück wird vor dem Abspielen einmal in eine Audiodatei

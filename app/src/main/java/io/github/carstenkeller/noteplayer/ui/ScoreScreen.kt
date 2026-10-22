@@ -6,6 +6,7 @@ import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.gestures.detectTransformGestures
 import android.net.Uri
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
@@ -50,6 +51,7 @@ import androidx.compose.ui.graphics.drawscope.withTransform
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.IntSize
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import io.github.carstenkeller.noteplayer.PlaybackState
 import io.github.carstenkeller.noteplayer.audio.Instrument
@@ -82,6 +84,9 @@ fun ScoreScreen(
     onSeek: (MusicEvent) -> Unit,
     onBack: () -> Unit,
     onAddPages: (List<Uri>) -> Unit,
+    onReplaceSheet: (Int, Uri) -> Unit,
+    onRemoveSheet: (Int) -> Unit,
+    onRename: (String) -> Unit,
 ) {
     val score = state.score(playback)
     val page = remember(state.page) { state.page.asImageBitmap() }
@@ -98,31 +103,45 @@ fun ScoreScreen(
 
     Surface(Modifier.fillMaxSize()) {
         Column(Modifier.fillMaxSize().safeDrawingPadding()) {
-            Row(Modifier.fillMaxWidth().padding(horizontal = 4.dp), verticalAlignment = Alignment.CenterVertically) {
-                TextButton(onClick = onBack) { Text("‹ Zurück") }
+            Row(Modifier.fillMaxWidth().padding(end = 4.dp), verticalAlignment = Alignment.CenterVertically) {
+                TextButton(onClick = onBack, contentPadding = PaddingValues(horizontal = 8.dp)) { Text("‹", style = MaterialTheme.typography.titleLarge) }
                 Column(Modifier.weight(1f)) {
                     Text(
-                        "${score.noteCount} Noten in ${score.systems.size} Zeile(n) erkannt",
-                        style = MaterialTheme.typography.bodyMedium,
+                        state.piece.name,
+                        style = MaterialTheme.typography.titleSmall,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
                     )
                     val position = current?.let {
                         "Zeile ${it.systemIndex + 1} · Takt ${measureOffsets[it.systemIndex] + it.measureIndex + 1}"
-                    } ?: "Note antippen = Startpunkt · zwei Finger = zoomen"
-                    Text(position, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.primary)
+                    } ?: "${score.noteCount} Noten in ${score.systems.size} Zeile(n) erkannt"
+                    Text(
+                        position,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.primary,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
                 }
-                // further sheets of the piece: they are played after the ones already there
-                val sources = rememberSourcePickers(onAddPages)
-                var addMenu by remember { mutableStateOf(false) }
-                Box {
-                    TextButton(onClick = { addMenu = true }) { Text("+ Blatt", maxLines = 1) }
-                    DropdownMenu(expanded = addMenu, onDismissRequest = { addMenu = false }) {
-                        DropdownMenuItem(text = { Text("Blatt fotografieren") }, onClick = { addMenu = false; sources.takePhoto() })
-                        DropdownMenuItem(text = { Text("Bilder auswählen") }, onClick = { addMenu = false; sources.pickImages() })
-                    }
-                }
+                SheetMenu(
+                    sheets = state.piece.sheets.size,
+                    onAddPages = onAddPages,
+                    onReplaceSheet = onReplaceSheet,
+                    onRemoveSheet = onRemoveSheet,
+                    onRename = onRename,
+                    name = state.piece.name,
+                )
             }
-            for (w in state.result.warnings + listOfNotNull(playback.error)) {
-                Text(w, color = MaterialTheme.colorScheme.error, modifier = Modifier.padding(horizontal = 16.dp))
+            // notes from the recognition: folded into one line, they take room from the music
+            val warnings = state.result.warnings + listOfNotNull(playback.error)
+            if (warnings.isNotEmpty()) {
+                var open by rememberSaveable(warnings) { mutableStateOf(false) }
+                Text(
+                    if (open) warnings.joinToString("\n") else "⚠ " + (if (warnings.size == 1) "1 Hinweis" else "${warnings.size} Hinweise") + " (antippen)",
+                    color = MaterialTheme.colorScheme.error,
+                    style = MaterialTheme.typography.bodySmall,
+                    modifier = Modifier.fillMaxWidth().clickable { open = !open }.padding(horizontal = 16.dp, vertical = 2.dp),
+                )
             }
 
             ZoomableScore(
@@ -310,23 +329,40 @@ private fun Controls(
     onBaseBpm: (Int) -> Unit,
 ) {
     var tempo by remember(playback.tempoPercent) { mutableFloatStateOf(playback.tempoPercent.toFloat()) }
-    Column(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 4.dp)) {
-        // laid out for narrow phones with large system font: nothing has to wrap
-        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            Button(onClick = onPlayPause, enabled = enabled, modifier = Modifier.weight(1f)) {
+    // the music comes first: the settings are folded away unless asked for
+    var expanded by rememberSaveable { mutableStateOf(false) }
+    Column(Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 2.dp)) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Button(onClick = onPlayPause, enabled = enabled, contentPadding = PaddingValues(horizontal = 14.dp)) {
                 Text(
                     when {
-                        playback.preparing -> "Klang lädt …"
-                        playback.playing -> "❚❚ Pause"
-                        else -> "▶ Abspielen"
+                        playback.preparing -> "…"
+                        playback.playing -> "❚❚"
+                        else -> "▶"
                     },
                     maxLines = 1,
                 )
             }
-            OutlinedButton(onClick = onStop, enabled = enabled, modifier = Modifier.weight(1f)) { Text("■ Stopp", maxLines = 1) }
+            Spacer(Modifier.width(6.dp))
+            OutlinedButton(onClick = onStop, enabled = enabled, contentPadding = PaddingValues(horizontal = 14.dp)) { Text("■", maxLines = 1) }
+            Spacer(Modifier.weight(1f))
+            TextButton(
+                onClick = { onTempo((playback.tempoPercent - 5).coerceAtLeast(25)) },
+                contentPadding = PaddingValues(horizontal = 6.dp),
+            ) { Text("−", maxLines = 1) }
+            Text("${tempo.roundToInt()} %", maxLines = 1, softWrap = false, style = MaterialTheme.typography.bodyMedium)
+            TextButton(
+                onClick = { onTempo((playback.tempoPercent + 5).coerceAtMost(200)) },
+                contentPadding = PaddingValues(horizontal = 6.dp),
+            ) { Text("+", maxLines = 1) }
+            TextButton(onClick = { expanded = !expanded }, contentPadding = PaddingValues(horizontal = 8.dp)) {
+                Text(if (expanded) "▾" else "⚙ ▴", maxLines = 1)
+            }
         }
+        if (playback.preparing) Text("Klang lädt …", style = MaterialTheme.typography.bodySmall)
+        if (!expanded) return@Column
         Row(verticalAlignment = Alignment.CenterVertically) {
-            Text("Tempo ${tempo.roundToInt()} %", maxLines = 1, softWrap = false, style = MaterialTheme.typography.bodyMedium)
+            Text("Tempo", maxLines = 1, softWrap = false, style = MaterialTheme.typography.bodyMedium)
             Slider(
                 value = tempo,
                 onValueChange = { tempo = (it / 5).roundToInt() * 5f },
@@ -336,10 +372,10 @@ private fun Controls(
             )
         }
         Row(verticalAlignment = Alignment.CenterVertically) {
-            Text("♩ = ${playback.baseBpm}", maxLines = 1, softWrap = false, style = MaterialTheme.typography.bodyMedium)
+            Text("♩ = ${playback.baseBpm} bei 100 %", maxLines = 1, softWrap = false, style = MaterialTheme.typography.bodyMedium)
             Spacer(Modifier.weight(1f))
             for (step in intArrayOf(-5, -1, 1, 5)) {
-                TextButton(onClick = { onBaseBpm(playback.baseBpm + step) }, contentPadding = PaddingValues(horizontal = 8.dp)) {
+                TextButton(onClick = { onBaseBpm(playback.baseBpm + step) }, contentPadding = PaddingValues(horizontal = 6.dp)) {
                     Text(if (step > 0) "+$step" else "−${-step}", maxLines = 1)
                 }
             }
@@ -371,6 +407,45 @@ private fun Controls(
             Text("Erkannte Noten umrahmen", style = MaterialTheme.typography.bodyMedium)
         }
     }
+}
+
+/**
+ * The sheets of the piece: add more, take a sheet again (when it was recognized badly), remove
+ * one; rename the piece.
+ */
+@Composable
+private fun SheetMenu(
+    sheets: Int,
+    name: String,
+    onAddPages: (List<Uri>) -> Unit,
+    onReplaceSheet: (Int, Uri) -> Unit,
+    onRemoveSheet: (Int) -> Unit,
+    onRename: (String) -> Unit,
+) {
+    // which sheet the next photo or picture replaces; null: it is added at the end
+    var replacing by rememberSaveable { mutableStateOf<Int?>(null) }
+    val sources = rememberSourcePickers { uris ->
+        val index = replacing
+        replacing = null
+        if (index != null) onReplaceSheet(index, uris.first()) else onAddPages(uris)
+    }
+    var menu by remember { mutableStateOf(false) }
+    var renaming by rememberSaveable { mutableStateOf(false) }
+    Box {
+        TextButton(onClick = { menu = true }, contentPadding = PaddingValues(horizontal = 8.dp)) { Text("Blätter ▾", maxLines = 1) }
+        DropdownMenu(expanded = menu, onDismissRequest = { menu = false }) {
+            DropdownMenuItem(text = { Text("+ Blatt fotografieren") }, onClick = { menu = false; replacing = null; sources.takePhoto() })
+            DropdownMenuItem(text = { Text("+ Bilder auswählen") }, onClick = { menu = false; replacing = null; sources.pickImages() })
+            for (i in 0 until sheets) {
+                val label = if (sheets > 1) "Blatt ${i + 1}" else "Blatt"
+                DropdownMenuItem(text = { Text("$label neu fotografieren") }, onClick = { menu = false; replacing = i; sources.takePhoto() })
+                DropdownMenuItem(text = { Text("$label durch Bild ersetzen") }, onClick = { menu = false; replacing = i; sources.pickImages() })
+                if (sheets > 1) DropdownMenuItem(text = { Text("$label entfernen") }, onClick = { menu = false; onRemoveSheet(i) })
+            }
+            DropdownMenuItem(text = { Text("Stück umbenennen") }, onClick = { menu = false; renaming = true })
+        }
+    }
+    if (renaming) RenameDialog(name, onDismiss = { renaming = false }, onConfirm = { renaming = false; onRename(it) })
 }
 
 /**
