@@ -46,19 +46,23 @@ object Omr {
 
     fun recognize(input: GrayImage, maxSide: Int = 2400): RecognitionResult {
         val warnings = ArrayList<String>()
-        var gray = input.downscaled(maxSide)
-        // a low k keeps thin, light-gray staff lines and stems of photographed pages
-        val bin0 = Binarizer.sauvola(gray, max(31, min(gray.width, gray.height) / 15), k = SAUVOLA_K)
-        val m0 = StaffDetector.metrics(bin0)
-            ?: return empty(gray, 0.0, 0.0, "Auf dem Bild wurden keine Notenlinien gefunden.")
-        val skew = StaffDetector.estimateSkew(bin0, m0.interline, m0.lineThickness)
-        if (abs(skew) >= 0.1) gray = gray.rotated(-skew)
-        val bin = Binarizer.sauvola(gray, max(31, (m0.interline * 5).toInt()), k = SAUVOLA_K)
-        val m = StaffDetector.metrics(bin) ?: m0
+        val small = input.downscaled(maxSide)
+        // light, thin staff lines (a photographed screen, a pale print) can get lost in the
+        // binarization while the black notes stay: the staves are also looked for with more
+        // sensitive thresholds, and the most staff that shows as real lines in the gray picture
+        // wins (on a clean page all find the same and nothing changes). Everything else is read
+        // from the picture with the normal threshold, where symbols are clean.
+        val pages = listOf(SAUVOLA_K, 0.1, 0.05).map { preparePage(small, it) }
+        var page = pages[0]
+        for (other in pages.drop(1)) if (other.staffLength > 1.15 * page.staffLength + 1) page = other
+        val gray = page.gray
+        val skew = page.skew
+        val m = page.metrics ?: return empty(gray, 0.0, 0.0, "Auf dem Bild wurden keine Notenlinien gefunden.")
+        val bin = if (page === pages[0]) page.bin else Binarizer.sauvola(gray, max(31, (m.interline * 5).toInt()), k = SAUVOLA_K)
         val d = m.interline
         if (d < 7) warnings += "Die Notenlinien sind sehr klein abgebildet – ein näheres Foto verbessert die Erkennung."
 
-        val staves = StaffDetector.detect(bin, m)
+        val staves = page.staves
         if (staves.isEmpty()) return empty(gray, d, skew, "Auf dem Bild wurden keine Notenlinien gefunden.")
 
         val systemOf = groupSystems(bin, staves, d)
@@ -125,7 +129,14 @@ object Omr {
         // all staves of a piece normally share one key signature: when most staves agree, the
         // others (misread, e.g. clef dots taken for sharps) take that key
         val keyVotes = keys.toList().groupingBy { it }.eachCount()
-        val (commonKey, votes) = keyVotes.maxBy { it.value }
+        var (commonKey, votes) = keyVotes.maxBy { it.value }
+        // a key signature is easily missed (pale print), hardly ever made up: a key read in at
+        // least two staves wins over "no key", when the two together are the majority
+        val signed = keyVotes.filterKeys { it != 0 }.entries.sortedByDescending { it.value }
+        if (commonKey == 0 && signed.isNotEmpty() && signed[0].value >= 2 && (signed.size < 2 || signed[0].value > signed[1].value)) {
+            commonKey = signed[0].key
+            votes = signed[0].value + (keyVotes[0] ?: 0)
+        }
         if (votes * 2 > keys.size) for (i in keys.indices) if (keys[i] != commonKey) {
             keys[i] = commonKey
             // its key signature was misread (or not read): keep its signs from being taken as
@@ -449,6 +460,45 @@ object Omr {
         val (a, b) = anchors[i - 1] to anchors[i]
         if (b.first == a.first) return x - a.first + a.second
         return a.second + (x - a.first) * (b.second - a.second) / (b.first - a.first)
+    }
+
+    /** The page straightened and binarized with threshold parameter [k], and the staves found on it. */
+    private class Page(val gray: GrayImage, val bin: BinaryImage, val skew: Double, val metrics: StaffMetrics?, val staves: List<Staff>) {
+        val staffLength: Double get() = staves.sumOf { (it.right - it.left).toDouble() }
+    }
+
+    private fun preparePage(input: GrayImage, k: Double): Page {
+        var gray = input
+        val bin0 = Binarizer.sauvola(gray, max(31, min(gray.width, gray.height) / 15), k = k)
+        val m0 = StaffDetector.metrics(bin0) ?: return Page(gray, bin0, 0.0, null, emptyList())
+        val skew = StaffDetector.estimateSkew(bin0, m0.interline, m0.lineThickness)
+        if (abs(skew) >= 0.1) gray = gray.rotated(-skew)
+        val bin = Binarizer.sauvola(gray, max(31, (m0.interline * 5).toInt()), k = k)
+        val m = StaffDetector.metrics(bin) ?: m0
+        return Page(gray, bin, skew, m, StaffDetector.detect(bin, m).filter { linesShow(gray, it) })
+    }
+
+    /**
+     * Whether the five lines of [s] are darker than the spaces between them on light paper. A
+     * sensitive threshold also finds "staves" in noise, e.g. in the dark frame around a
+     * photographed screen.
+     */
+    private fun linesShow(gray: GrayImage, s: Staff): Boolean {
+        var lines = 0.0
+        var spaces = 0.0
+        var n = 0
+        var x = s.left
+        while (x <= s.right) {
+            val fx = x.toDouble()
+            for (l in 0 until 5) lines += gray.sample(fx, s.lineY(l, fx))
+            for (l in 0 until 4) spaces += gray.sample(fx, (s.lineY(l, fx) + s.lineY(l + 1, fx)) / 2)
+            n++
+            x += 3
+        }
+        if (n == 0) return false
+        val line = lines / (5 * n)
+        val space = spaces / (4 * n)
+        return space > 110 && space - line >= 10
     }
 
     private fun empty(gray: GrayImage, d: Double, skew: Double, msg: String) =

@@ -178,6 +178,7 @@ object StaffDetector {
         }
         // along a slope, short pieces of text lines (a title) can look like a staff: a staff only
         // found there must be a good part as wide as the staves of the page usually are
+        if (staves.isEmpty()) return emptyList()
         val widths = staves.map { it.right - it.left }.sorted()
         val typical = widths[widths.size / 2]
         return staves.filter { it !in sloped || it.right - it.left >= 0.4 * typical }
