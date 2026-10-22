@@ -89,6 +89,13 @@ object Omr {
                     (if (f.stemDir > 0) hh.cy > f.box.bottom && hh.cy < f.stemTip else hh.cy < f.box.top && hh.cy > f.stemTip)
             }
         }
+        // a whole note is wide and low; a narrow ring without a stem in a tall sign is a loop of
+        // another sign (the blob of a sixteenth rest closed by a staff line) unless it belongs
+        // to a half-note chord (a head set beside the stem of the others)
+        heads.removeAll { h ->
+            h.hollow && h.stemDir == 0 && h.box.right - h.box.left < 1.25 * d && (h.comp?.height ?: 0) > 2.8 * d &&
+                heads.none { o -> o !== h && o.hollow && o.stemDir != 0 && abs(o.cx - h.cx) < 2 * d && abs(o.cy - h.cy) < 4 * d }
+        }
         // notes beyond the staff need ledger lines; lyrics and chord diagrams have none
         heads.removeAll { it.staff < 0 || !ledgersOk(bin, staves[it.staff], it, d, m.lineThickness) }
 
@@ -206,7 +213,7 @@ object Omr {
                 hollow -> 4 * Score.TPQ
                 else -> {
                     val edge = if (stemHead!!.stemDir < 0) g.minOf { it.box.top }.toDouble() else g.maxOf { it.box.bottom }.toDouble()
-                    when (countBeams(aggressive, stemHead, edge, d)) {
+                    when (countBeams(aggressive, conservative, stemHead, edge, d)) {
                         0 -> Score.TPQ
                         1 -> Score.TPQ / 2
                         2 -> Score.TPQ / 4
@@ -287,17 +294,38 @@ object Omr {
                 columns.last() += e
             }
             val colTime = IntArray(columns.size)
+            val colPos = DoubleArray(columns.size) { c -> columns[c].minOf { refX(it.first, it.second.box.centerX.toDouble()) } }
+            fun isWhole(it: Item) = it.heads.isNotEmpty() && it.heads.all { h -> h.hollow && h.stemDir == 0 }
+            // width of the measure around x (of the reference staff), for a rough time from the layout
+            fun measureWidth(x: Double): Double {
+                val bars = barlines[ref]
+                val before = bars.filter { it <= x }.maxOrNull() ?: staves[ref].left.toDouble()
+                val after = bars.filter { it > x }.minOrNull() ?: staves[ref].right.toDouble()
+                return max(after - before, 4 * d)
+            }
             val lastCol = HashMap<Int, Int>() // staff -> index of its previous column
             for ((c, col) in columns.withIndex()) {
                 var time = -1
                 for (si in col.map { it.first }.distinct()) {
                     val pc = lastCol[si] ?: continue
-                    val shortest = columns[pc].filter { it.first == si }.minOf { it.second.duration }
+                    val prev = columns[pc].filter { it.first == si }.map { it.second }
+                    // a whole note followed closely by another note of its staff is held in a
+                    // second voice (the other voice's rests are often not recognized): it does
+                    // not hold up the next note
+                    if (prev.all { isWhole(it) } && colPos[c] - colPos[pc] < 0.6 * measureWidth(colPos[pc])) continue
+                    val shortest = prev.minOf { it.duration }
                     time = max(time, colTime[pc] + shortest)
                 }
-                if (time < 0) {
-                    time = if (c == 0) t else colTime[c - 1] + columns[c - 1].minOf { it.second.duration }
+                if (time < 0 && c > 0) {
+                    val prev = columns[c - 1].map { it.second }
+                    val moving = prev.filter { !isWhole(it) }
+                    time = if (moving.isNotEmpty()) colTime[c - 1] + moving.minOf { it.duration } else {
+                        // only held notes before: the time from the distance on the page
+                        val share = (colPos[c] - colPos[c - 1]) / measureWidth(colPos[c - 1])
+                        colTime[c - 1] + max(Score.TPQ / 4, (share * 4 * Score.TPQ / (Score.TPQ / 4)).roundToInt() * (Score.TPQ / 4))
+                    }
                 }
+                if (time < 0) time = t
                 if (c > 0) time = max(time, colTime[c - 1])
                 colTime[c] = time
                 for (si in col.map { it.first }.distinct()) lastCol[si] = c
@@ -896,7 +924,9 @@ object Omr {
     private fun isDotFor(c: Component, box: Box, cy: Double, d: Double): Boolean {
         val big = max(c.width, c.height)
         val small = min(c.width, c.height)
-        if (big > 0.6 * d || small < 0.12 * d || c.fill < 0.45) return false
+        // a dot touching a staff line keeps a piece of the line: as wide as a dot, but taller
+        val onLine = c.width >= 0.35 * d && c.width <= 0.65 * d && c.height <= 1.05 * d && c.fill >= 0.6
+        if ((big > 0.6 * d && !onLine) || small < 0.12 * d || c.fill < 0.45) return false
         if (c.x0 < box.right + 0.05 * d || c.x0 > box.right + 1.4 * d) return false
         return c.cy >= cy - 0.75 * d && c.cy <= cy + 0.4 * d
     }
@@ -1123,7 +1153,13 @@ object Omr {
         return byRoot.values.filter { g -> g.any { it.hollow } || g.any { it.stemDir != 0 } }
     }
 
-    private fun countBeams(img: BinaryImage, h: Head, headEdge: Double, d: Double): Int {
+    /**
+     * Beams or flags at the stem of [h]. Counted in [img] (staff lines removed thoroughly) and in
+     * [cons] (removed carefully): where a beam lies on a staff line, the thorough removal can
+     * take it away together with the line; in [cons] only strokes as thick as a beam count
+     * (thicker remains of lines in photos stay there).
+     */
+    private fun countBeams(img: BinaryImage, cons: BinaryImage, h: Head, headEdge: Double, d: Double): Int {
         val tip = h.stemTip
         val (ya, yb) = if (h.stemDir < 0) {
             (tip - 0.2 * d) to min(tip + 2.8 * d, headEdge - 0.3 * d)
@@ -1132,15 +1168,15 @@ object Omr {
         }
         if (yb <= ya) return 0
         var best = 0
-        fun countAt(x: Int): Int {
+        fun countAt(x: Int, image: BinaryImage = img, minLen: Double = 0.22): Int {
             var count = 0
             var y = ya.roundToInt()
             while (y <= yb.roundToInt()) {
-                if (!img[x, y]) { y++; continue }
+                if (!image[x, y]) { y++; continue }
                 val start = y
-                while (y <= yb.roundToInt() + d.toInt() && img[x, y]) y++
+                while (y <= yb.roundToInt() + d.toInt() && image[x, y]) y++
                 val len = y - start
-                if (len >= 0.22 * d && len <= 1.6 * d && attachedToStem(img, h.stemX, x, start, y - 1)) {
+                if (len >= minLen * d && len <= 1.6 * d && attachedToStem(image, h.stemX, x, start, y - 1)) {
                     count += max(1, (len / (0.68 * d)).roundToInt())
                 }
             }
@@ -1150,7 +1186,10 @@ object Omr {
             // close to the stem every beam shows, also a short stub of a sixteenth (about one
             // staff space long); further out a curved flag can cross a column twice, so it only
             // counts when nothing is found close to the stem
-            val near = max(countAt((h.stemX + side * 0.3 * d).roundToInt()), countAt((h.stemX + side * 0.45 * d).roundToInt()))
+            val near = listOf(0.3, 0.45).maxOf { off ->
+                val x = (h.stemX + side * off * d).roundToInt()
+                max(countAt(x), countAt(x, cons, 0.4))
+            }
             val sideCount = if (near > 0) near else countAt((h.stemX + side * 0.75 * d).roundToInt())
             best = max(best, sideCount)
         }
