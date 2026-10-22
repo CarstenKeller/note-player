@@ -135,29 +135,90 @@ object StaffDetector {
         return best
     }
 
+    /** Slopes (degrees) at which staves are looked for, after the page was straightened as a whole. */
+    private val SLOPES = doubleArrayOf(0.0, -1.0, 1.0, -2.0, 2.0, -3.0, 3.0, -4.0, 4.0)
+
+    /**
+     * Finds the staves. A photographed page (perspective, a book's curved page) is not straight
+     * everywhere even after it was turned as a whole: the staves are looked for along several
+     * slopes, each staff where it shows best; the tracking then follows its lines.
+     */
     fun detect(bin: BinaryImage, m: StaffMetrics): List<Staff> {
         val d = m.interline
         val w = bin.width
-        val h = bin.height
         val minRun = max(10, (2 * d).toInt())
-        val profile = IntArray(h)
-        val longestRunMid = IntArray(h)
-        for (y in 0 until h) {
+        // the long horizontal runs of ink (pieces of staff lines), once
+        val runs = ArrayList<IntArray>() // y, start, end
+        for (y in 0 until bin.height) {
             var x = 0
-            var best = 0
             val row = y * w
             while (x < w) {
                 if (!bin.data[row + x]) { x++; continue }
                 val start = x
                 while (x < w && bin.data[row + x]) x++
-                val len = x - start
-                if (len >= minRun) profile[y] += len
-                if (len > best) { best = len; longestRunMid[y] = (start + x) / 2 }
+                if (x - start >= minRun) runs += intArrayOf(y, start, x)
             }
         }
-        val maxP = profile.maxOrNull() ?: 0
+        if (runs.isEmpty()) return emptyList()
+        val profiles = SLOPES.map { profileAlong(runs, bin.height, w, it) }
+        val maxP = profiles.maxOf { it.first.maxOrNull() ?: 0 }
         if (maxP == 0) return emptyList()
-        val thr = maxP * 0.25
+        val staves = ArrayList<Staff>()
+        val sloped = HashSet<Staff>()
+        for ((i, slope) in SLOPES.withIndex()) {
+            val found = detectAlong(bin, m, slope, profiles[i].first, profiles[i].second, (profiles[i].first.maxOrNull() ?: 0) * 0.25)
+            for (staff in found) {
+                // a staff found at several slopes: the widest find wins
+                val same = staves.indexOfFirst { overlaps(it, staff, d) }
+                if (same < 0) staves += staff
+                else if (staff.right - staff.left > 1.2 * (staves[same].right - staves[same].left)) staves[same] = staff
+                else continue
+                if (slope != 0.0) sloped += staff
+            }
+        }
+        // along a slope, short pieces of text lines (a title) can look like a staff: a staff only
+        // found there must be a good part as wide as the staves of the page usually are
+        val widths = staves.map { it.right - it.left }.sorted()
+        val typical = widths[widths.size / 2]
+        return staves.filter { it !in sloped || it.right - it.left >= 0.4 * typical }
+            .sortedBy { it.lineY(0, (it.left + it.right) / 2.0) }
+    }
+
+    private fun overlaps(a: Staff, b: Staff, d: Double): Boolean {
+        val from = max(a.left, b.left)
+        val to = min(a.right, b.right)
+        if (to <= from) return false
+        val x = (from + to) / 2.0
+        return abs(a.lineY(0, x) - b.lineY(0, x)) < 2.5 * d
+    }
+
+    /**
+     * Ink of the runs projected along [slope] (degrees), indexed by the row at the middle of the
+     * page (shifted by the page height so that it stays positive), and the middle of the longest
+     * run for each such row.
+     */
+    private fun profileAlong(runs: List<IntArray>, h: Int, w: Int, slope: Double): Pair<IntArray, IntArray> {
+        val tn = tan(Math.toRadians(slope))
+        val profile = IntArray(3 * h)
+        val longest = IntArray(3 * h)
+        val longestMid = IntArray(3 * h)
+        for (r in runs) {
+            val mid = (r[1] + r[2]) / 2
+            val p = (r[0] - (mid - w / 2) * tn).roundToInt() + h
+            if (p !in profile.indices) continue
+            val len = r[2] - r[1]
+            profile[p] += len
+            if (len > longest[p]) { longest[p] = len; longestMid[p] = mid }
+        }
+        return profile to longestMid
+    }
+
+    private fun detectAlong(bin: BinaryImage, m: StaffMetrics, slope: Double, profile: IntArray, longestRunMid: IntArray, thr: Double): List<Staff> {
+        val d = m.interline
+        val w = bin.width
+        val h = profile.size
+        val tn = tan(Math.toRadians(slope))
+        val offset = bin.height
 
         // candidate lines = groups of neighboring rows above the threshold
         data class Cand(val y: Double, val strongestRow: Int, val strength: Double)
@@ -207,7 +268,9 @@ object StaffDetector {
             }
             if (chosen.size == 5) {
                 val startX = longestRunMid[cands[chosen[2]].strongestRow]
-                val staff = track(bin, chosen.map { cands[it].y }.toDoubleArray(), startX, m)
+                // from the projection back to the rows of the page at startX
+                val ys = chosen.map { cands[it].y - offset + (startX - w / 2) * tn }.toDoubleArray()
+                val staff = track(bin, ys, startX, m)
                 if (staff != null) staves += staff
                 i = chosen.last() + 1
             } else {
