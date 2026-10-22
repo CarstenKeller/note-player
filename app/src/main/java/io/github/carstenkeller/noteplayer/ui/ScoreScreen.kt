@@ -5,7 +5,12 @@ import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.gestures.detectTransformGestures
+import android.content.Context
+import android.content.Intent
 import android.net.Uri
+import androidx.compose.ui.platform.LocalContext
+import androidx.core.content.FileProvider
+import io.github.carstenkeller.noteplayer.Sheet
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -89,6 +94,7 @@ fun ScoreScreen(
     onRename: (String) -> Unit,
 ) {
     val score = state.score(playback)
+    val context = LocalContext.current
     val page = remember(state.page) { state.page.asImageBitmap() }
     val tiles = remember(state.page) { tiles(state.page) }
     var showRecognized by rememberSaveable { mutableStateOf(true) }
@@ -125,6 +131,7 @@ fun ScoreScreen(
                 }
                 SheetMenu(
                     sheets = state.piece.sheets.size,
+                    onShareSheet = { i -> shareSheet(context, state.piece.sheets[i]) },
                     onAddPages = onAddPages,
                     onReplaceSheet = onReplaceSheet,
                     onRemoveSheet = onRemoveSheet,
@@ -421,6 +428,7 @@ private fun SheetMenu(
     onReplaceSheet: (Int, Uri) -> Unit,
     onRemoveSheet: (Int) -> Unit,
     onRename: (String) -> Unit,
+    onShareSheet: (Int) -> Unit,
 ) {
     // which sheet the next photo or picture replaces; null: it is added at the end
     var replacing by rememberSaveable { mutableStateOf<Int?>(null) }
@@ -440,6 +448,7 @@ private fun SheetMenu(
                 val label = if (sheets > 1) "Blatt ${i + 1}" else "Blatt"
                 DropdownMenuItem(text = { Text("$label neu fotografieren") }, onClick = { menu = false; replacing = i; sources.takePhoto() })
                 DropdownMenuItem(text = { Text("$label durch Bild ersetzen") }, onClick = { menu = false; replacing = i; sources.pickImages() })
+                DropdownMenuItem(text = { Text("$label teilen") }, onClick = { menu = false; onShareSheet(i) })
                 if (sheets > 1) DropdownMenuItem(text = { Text("$label entfernen") }, onClick = { menu = false; onRemoveSheet(i) })
             }
             DropdownMenuItem(text = { Text("Stück umbenennen") }, onClick = { menu = false; renaming = true })
@@ -498,3 +507,13 @@ private fun nearestEvent(score: Score, x: Float, y: Float, space: Float): MusicE
         .filter { it.second <= (3 * space) * (3 * space) }
         .minByOrNull { it.second }
         ?.first
+
+/** Hands the saved photo, picture or video of [sheet] to another app (mail, messenger, gallery …). */
+private fun shareSheet(context: Context, sheet: Sheet) {
+    val uri = FileProvider.getUriForFile(context, "${context.packageName}.fileprovider", sheet.file)
+    val send = Intent(Intent.ACTION_SEND)
+        .setType(if (sheet.video) "video/mp4" else if (sheet.file.extension == "png") "image/png" else "image/jpeg")
+        .putExtra(Intent.EXTRA_STREAM, uri)
+        .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+    context.startActivity(Intent.createChooser(send, "Blatt teilen"))
+}
