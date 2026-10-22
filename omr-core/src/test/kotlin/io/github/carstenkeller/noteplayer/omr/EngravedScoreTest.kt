@@ -150,4 +150,19 @@ class EngravedScoreTest {
     fun flagIsNoTie() {
         assertEquals(0, recognize("freude_hr_photo.jpg").events.count { it.holds.isNotEmpty() })
     }
+
+    /**
+     * Sixteenths with flags, dotted rhythms, eighth rests; an eighth note's flag must not count
+     * as a hollow head.
+     */
+    @Test
+    fun rhythms() {
+        assertEquals(
+            "R/240 B4/240 B4/240 B4/240 D5/480 R/480 " +
+                "F#5/240 F#5/240 F#5/120 D5/240 F#5/120 F#5/480 D5/240 D5/240 " +
+                "E5/120 D5/360 A4/240 D5/240 D5/480 R/480 " +
+                "R/360 B4/120 E5/240 E5/120 E5/120 E5/480 R/360 A4/120",
+            describe(recognize("rhythm.png")),
+        )
+    }
 }

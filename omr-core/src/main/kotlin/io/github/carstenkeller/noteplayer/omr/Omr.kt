@@ -80,6 +80,15 @@ object Omr {
             h.comp = compOfHead(comps, aggressive, h, d)
             findStem(aggressive, h, d)
         }
+        // the space between the stem and the flag of an eighth note is closed all around and
+        // looks like the hole of a half note; it lies along the stem, between head and stem tip
+        heads.removeAll { hh ->
+            hh.hollow && heads.any { f ->
+                !f.hollow && f.stemDir != 0 &&
+                    hh.box.left <= f.stemX + 0.3 * d && hh.box.right >= f.stemX - 0.3 * d &&
+                    (if (f.stemDir > 0) hh.cy > f.box.bottom && hh.cy < f.stemTip else hh.cy < f.box.top && hh.cy > f.stemTip)
+            }
+        }
         // notes beyond the staff need ledger lines; lyrics and chord diagrams have none
         heads.removeAll { it.staff < 0 || !ledgersOk(bin, staves[it.staff], it, d, m.lineThickness) }
 
@@ -215,7 +224,7 @@ object Omr {
                 if (used[c.id] || glyphStaff[c.id] != si || c.cx <= headerEnd[si]) continue
                 if (c.cx < s.left || c.cx > s.right) continue
                 if (heads.any { h -> c.x1 >= h.box.left && c.x0 <= h.box.right && c.y1 >= h.box.top && c.y0 <= h.box.bottom }) continue
-                val rest = classifyRest(s, c, d) ?: continue
+                val rest = classifyRest(aggressive, s, c, d) ?: continue
                 used[c.id] = true
                 var dur = rest.first
                 val restBox = Box(c.x0.toFloat(), c.y0.toFloat(), c.x1.toFloat(), c.y1.toFloat())
@@ -1113,11 +1122,7 @@ object Omr {
         }
         if (yb <= ya) return 0
         var best = 0
-        for (side in intArrayOf(-1, 1)) {
-            // a curved flag can cross a column twice, so a side counts the fewest beams any column sees
-            var sideCount = Int.MAX_VALUE
-            for (off in doubleArrayOf(0.45, 0.75, 1.0)) {
-            val x = (h.stemX + side * off * d).roundToInt()
+        fun countAt(x: Int): Int {
             var count = 0
             var y = ya.roundToInt()
             while (y <= yb.roundToInt()) {
@@ -1129,9 +1134,15 @@ object Omr {
                     count += max(1, (len / (0.68 * d)).roundToInt())
                 }
             }
-            if (count > 0) sideCount = min(sideCount, count)
-            }
-            if (sideCount != Int.MAX_VALUE) best = max(best, sideCount)
+            return count
+        }
+        for (side in intArrayOf(-1, 1)) {
+            // close to the stem every beam shows, also a short stub of a sixteenth (about one
+            // staff space long); further out a curved flag can cross a column twice, so it only
+            // counts when nothing is found close to the stem
+            val near = max(countAt((h.stemX + side * 0.3 * d).roundToInt()), countAt((h.stemX + side * 0.45 * d).roundToInt()))
+            val sideCount = if (near > 0) near else countAt((h.stemX + side * 0.75 * d).roundToInt())
+            best = max(best, sideCount)
         }
         if (DEBUG_REGION?.let { h.cx >= it[0] && h.cx <= it[2] && h.cy >= it[1] && h.cy <= it[3] } == true) {
             println("DBG beams head=(${h.cx.toInt()},${h.cy.toInt()}) stemX=${h.stemX} tip=${h.stemTip} dir=${h.stemDir} ya=$ya yb=$yb -> $best")
@@ -1153,7 +1164,7 @@ object Omr {
     }
 
     /** Duration and whether it is a whole-measure rest. */
-    private fun classifyRest(s: Staff, c: Component, d: Double): Pair<Int, Boolean>? {
+    private fun classifyRest(img: BinaryImage, s: Staff, c: Component, d: Double): Pair<Int, Boolean>? {
         val top = s.top(c.cx)
         val bottom = s.bottom(c.cx)
         if (c.cy < top - 0.3 * d || c.cy > bottom + 0.3 * d) return null
@@ -1172,9 +1183,21 @@ object Omr {
             }
         }
         if (w < 0.55 * d || w > 1.4 * d) return null
-        if (h >= 2.0 * d && h <= 3.4 * d && abs(c.cy - mid) <= 1.0 * d && c.fill in 0.2..0.75) return Score.TPQ to false
+        if (h >= 2.0 * d && h <= 3.4 * d && abs(c.cy - mid) <= 1.0 * d && c.fill in 0.2..0.75) {
+            // a tall eighth rest: shorter, and below its head only a thin slanting stroke; a
+            // quarter rest ends in a hook
+            // (quarter rests are about three staff spaces high)
+            return (if (h < 2.5 * d && thinBottom(img, c, d)) Score.TPQ / 2 else Score.TPQ) to false
+        }
         if (h >= 1.1 * d && h < 2.0 * d && abs(c.cy - mid) <= 1.2 * d && c.fill <= 0.6) return Score.TPQ / 2 to false
         return null
+    }
+
+    /** Whether the lower third of [c] is only a thin stroke (ink per row, typically). */
+    private fun thinBottom(img: BinaryImage, c: Component, d: Double): Boolean {
+        val from = c.y0 + (c.height * 2) / 3
+        val widths = (from..c.y1).map { y -> (c.x0..c.x1).count { x -> img[x, y] } }.sorted()
+        return widths.isNotEmpty() && widths[widths.size / 2] <= 0.3 * d
     }
 
     private val SHARP_ORDER = intArrayOf(3, 0, 4, 1, 5, 2, 6) // F C G D A E B
