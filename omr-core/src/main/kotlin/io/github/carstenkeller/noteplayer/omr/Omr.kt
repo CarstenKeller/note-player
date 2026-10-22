@@ -62,7 +62,19 @@ object Omr {
         val d = m.interline
         if (d < 7) warnings += "Die Notenlinien sind sehr klein abgebildet – ein näheres Foto verbessert die Erkennung."
 
-        val staves = page.staves
+        // a part of the page can be paler than the rest (light falling on a screen): staves that
+        // only a more sensitive threshold finds are added where no other staff was found
+        val staves = page.staves.toMutableList()
+        for (other in pages) {
+            if (other === page) continue
+            val more = if (abs(other.skew - skew) <= 0.05 && other.metrics != null && abs(other.metrics.interline - d) <= 0.1 * d) other.staves
+            else StaffDetector.detect(Binarizer.sauvola(gray, max(31, (d * 5).toInt()), k = other.k), m).filter { linesShow(gray, it) }
+            for (s in more) {
+                val x = (s.left + s.right) / 2.0
+                if (staves.none { t -> t.top(x) < s.bottom(x) + d && s.top(x) < t.bottom(x) + d }) staves += s
+            }
+        }
+        staves.sortBy { it.top((it.left + it.right) / 2.0) }
         if (staves.isEmpty()) return empty(gray, d, skew, "Auf dem Bild wurden keine Notenlinien gefunden.")
 
         val systemOf = groupSystems(bin, staves, d)
@@ -255,6 +267,8 @@ object Omr {
             assignPitches(items[si], staves[si], clefs[si], keys[si])
             detectTies(conservative, bin, items[si], staves[si], d)
         }
+        applyTriplets(aggressive, glyphs, used, staves, items, d)
+
         // ties over a line break: an arc running from the last note to the end of the line
         // continues at the same pitch in the same staff of the next system
         for ((si, s) in staves.withIndex()) {
@@ -463,19 +477,19 @@ object Omr {
     }
 
     /** The page straightened and binarized with threshold parameter [k], and the staves found on it. */
-    private class Page(val gray: GrayImage, val bin: BinaryImage, val skew: Double, val metrics: StaffMetrics?, val staves: List<Staff>) {
+    private class Page(val k: Double, val gray: GrayImage, val bin: BinaryImage, val skew: Double, val metrics: StaffMetrics?, val staves: List<Staff>) {
         val staffLength: Double get() = staves.sumOf { (it.right - it.left).toDouble() }
     }
 
     private fun preparePage(input: GrayImage, k: Double): Page {
         var gray = input
         val bin0 = Binarizer.sauvola(gray, max(31, min(gray.width, gray.height) / 15), k = k)
-        val m0 = StaffDetector.metrics(bin0) ?: return Page(gray, bin0, 0.0, null, emptyList())
+        val m0 = StaffDetector.metrics(bin0) ?: return Page(k, gray, bin0, 0.0, null, emptyList())
         val skew = StaffDetector.estimateSkew(bin0, m0.interline, m0.lineThickness)
         if (abs(skew) >= 0.1) gray = gray.rotated(-skew)
         val bin = Binarizer.sauvola(gray, max(31, (m0.interline * 5).toInt()), k = k)
         val m = StaffDetector.metrics(bin) ?: m0
-        return Page(gray, bin, skew, m, StaffDetector.detect(bin, m).filter { linesShow(gray, it) })
+        return Page(k, gray, bin, skew, m, StaffDetector.detect(bin, m).filter { linesShow(gray, it) })
     }
 
     /**
@@ -1290,6 +1304,70 @@ object Omr {
         }
         if (h >= 1.1 * d && h < 2.0 * d && abs(c.cy - mid) <= 1.2 * d && c.fill <= 0.6) return Score.TPQ / 2 to false
         return null
+    }
+
+    /**
+     * Triplets marked by a bracket: a thin horizontal line, interrupted by the "3" (and in pale
+     * photos often broken into several pieces), with a short hook at both outer ends. The notes
+     * of the staff under (or above) the bracket last two thirds of their written value.
+     * Fingerings (a lone digit) and lyric extender lines have no hooks and are not taken for
+     * triplets.
+     */
+    private fun applyTriplets(img: BinaryImage, glyphs: List<Component>, used: BooleanArray, staves: List<Staff>, items: Array<ArrayList<Item>>, d: Double) {
+        // ink per column of c (between its rows)
+        fun colInk(c: Component, x: Int) = (c.y0..c.y1).count { y -> img[x, y] }
+        // a piece of the line: its height at the middle and its slope
+        class Piece(val c: Component, val y: Double, val slope: Double) {
+            fun yAt(x: Double) = y + slope * (x - c.cx)
+        }
+        val thin = max(3.0, 0.4 * d)
+        val pieces = glyphs.filter { c -> !used[c.id] && c.width >= 0.6 * d && c.width <= 20 * d && c.height <= 1.6 * d }.mapNotNull { c ->
+            val inner = (c.x0 + c.width * 15 / 100)..(c.x1 - c.width * 15 / 100)
+            if (inner.isEmpty()) return@mapNotNull null
+            val inks = inner.map { colInk(c, it) }.sorted()
+            if (inks[inks.size / 2] > thin) return@mapNotNull null
+            // straight (a tie or slur is curved)
+            val pts = inner.mapNotNull { x -> (c.y0..c.y1).filter { y -> img[x, y] }.takeIf { it.isNotEmpty() }?.let { x to it.average() } }
+            if (pts.isEmpty()) return@mapNotNull null
+            val mx = pts.map { it.first.toDouble() }.average()
+            val my = pts.map { it.second }.average()
+            val sxx = pts.sumOf { (it.first - mx) * (it.first - mx) }
+            val slope = if (sxx > 0) pts.sumOf { (it.first - mx) * (it.second - my) } / sxx else 0.0
+            if (pts.maxOf { abs(it.second - (my + slope * (it.first - mx))) } > max(1.5, 0.15 * d)) return@mapNotNull null
+            Piece(c, my + slope * (c.cx - mx), slope)
+        }.sortedBy { it.c.x0 }
+        val hook = max(3.0, 0.4 * d)
+        fun hookLeft(p: Piece) = p.c.width >= 1.2 * d && (colInk(p.c, p.c.x0) >= hook || colInk(p.c, p.c.x0 + 1) >= hook)
+        fun hookRight(p: Piece) = p.c.width >= 1.2 * d && (colInk(p.c, p.c.x1) >= hook || colInk(p.c, p.c.x1 - 1) >= hook)
+        val taken = HashSet<Piece>()
+        for (l in pieces) {
+            if (l in taken || !hookLeft(l)) continue
+            // follow the line to the right, piece by piece, up to a piece with a hook at its end
+            val chain = arrayListOf(l)
+            var r: Piece? = null
+            while (true) {
+                val cur = chain.last()
+                val next = pieces.filter { p -> p !in taken && p.c.x0 > cur.c.x1 && p.c.x0 - cur.c.x1 <= 6 * d && abs(p.y - cur.yAt(p.c.cx)) <= 0.6 * d + 0.1 * (p.c.x0 - cur.c.x1) }
+                    .minByOrNull { it.c.x0 } ?: break
+                chain += next
+                if (hookRight(next)) { r = next; break }
+                if (next.c.x1 - l.c.x0 > 20 * d) break
+            }
+            if (r == null || r.c.x1 - l.c.x0 < 3 * d || r.c.x1 - l.c.x0 > 20 * d) continue
+            // the "3" interrupts the line
+            if (chain.zipWithNext().maxOf { (a, b) -> b.c.x0 - a.c.x1 } < 0.3 * d) continue
+            val y = (l.y + r.y) / 2
+            val from = l.c.x0 - 0.3 * d
+            val to = r.c.x1 + 0.3 * d
+            // the staff whose notes lie under (or above) the bracket, the nearest one
+            val x = (from + to) / 2
+            fun dist(st: Staff) = if (y < st.top(x)) st.top(x) - y else if (y > st.bottom(x)) y - st.bottom(x) else 0.0
+            val si = staves.indices.filter { i -> items[i].any { it.box.centerX in from..to } }.minByOrNull { dist(staves[it]) } ?: continue
+            if (dist(staves[si]) > 6 * d) continue
+            taken += chain
+            for (p in chain) used[p.c.id] = true
+            for (it in items[si]) if (it.box.centerX in from..to) it.duration = (it.duration * 2.0 / 3).roundToInt()
+        }
     }
 
     /** Whether the lower third of [c] is only a thin stroke (ink per row, typically). */

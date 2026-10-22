@@ -136,7 +136,7 @@ object StaffDetector {
     }
 
     /** Slopes (degrees) at which staves are looked for, after the page was straightened as a whole. */
-    private val SLOPES = doubleArrayOf(0.0, -1.0, 1.0, -2.0, 2.0, -3.0, 3.0, -4.0, 4.0)
+    private val SLOPES = doubleArrayOf(0.0, -0.25, 0.25, -0.5, 0.5, -0.75, 0.75, -1.0, 1.0, -1.5, 1.5, -2.0, 2.0, -3.0, 3.0, -4.0, 4.0)
 
     /**
      * Finds the staves. A photographed page (perspective, a book's curved page) is not straight

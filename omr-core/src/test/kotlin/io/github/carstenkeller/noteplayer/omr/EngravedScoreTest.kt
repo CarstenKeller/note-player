@@ -180,4 +180,17 @@ class EngravedScoreTest {
         )
         assertEquals(listOf("B4", "C5", "C5", "E5", "D5", "C5", "B4"), s.events.filter { it.durationTicks < 1920 }.map { name(it.pitches.first()) })
     }
+
+    /**
+     * Quarter triplets under a bracket with the "3": three notes in the time of two. The second
+     * bracket is slanted. (Image rendered with Verovio.)
+     */
+    @Test
+    fun tripletBrackets() {
+        val s = recognize("triplets.png")
+        assertEquals(
+            "0/480 480/480 960/320 1280/320 1600/320 1920/320 2240/320 2560/320 2880/960 3840/480 4320/480 4800/960",
+            s.events.joinToString(" ") { "${it.startTick}/${it.durationTicks}" },
+        )
+    }
 }

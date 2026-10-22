@@ -75,6 +75,7 @@ Erkannt werden:
   zweite Note wird nicht neu angeschlagen, sondern der Ton klingt weiter. Wird bei einem Akkord
   ein Bogen erkannt, gelten alle gemeinsamen Töne der beiden Akkorde als gebunden.
 - Ganze, halbe, Viertel- und Achtelpausen
+- Triolen mit Klammer und „3“ (auch schräge oder in blassen Fotos unterbrochene Klammern)
 - Taktstriche
 - Systeme aus mehreren Notenzeilen (z. B. Gesang + Klavier), die links durch eine Linie
   verbunden sind: Noten, die übereinander stehen, erklingen gleichzeitig. Leichte perspektivische
@@ -86,7 +87,7 @@ Erkannt werden:
 
 - Handschrift
 - Taktart (wird überlesen; eine Ganztaktpause zählt als 4 Viertel, wenn sonst nichts im Takt steht)
-- Triolen
+- Triolen ohne Klammer (nur die „3“ über einem Balken) und andere N-tolen
 - Bindebögen (Legato) werden ignoriert; zwischen zwei gleich hohen Noten sind sie von
   Haltebögen nicht zu unterscheiden und werden dort wie Haltebögen behandelt
 - Wiederholungen, Volta-Klammern, D.C./D.S.
