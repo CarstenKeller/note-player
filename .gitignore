@@ -7,3 +7,5 @@ local.properties
 captures/
 .kotlin/
 *.out.png
+web/node_modules/
+web/dist/

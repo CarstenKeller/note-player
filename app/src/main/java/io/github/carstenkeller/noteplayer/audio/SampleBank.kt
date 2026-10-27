@@ -7,22 +7,18 @@ import android.media.MediaFormat
 import java.nio.ByteOrder
 import kotlin.math.abs
 
-/** A recorded note: mono samples at [sampleRate], recorded at MIDI pitch [pitch]. */
-class Sample(val pitch: Int, val data: FloatArray, val sampleRate: Int)
-
 /**
  * Piano samples from assets/piano (file names like "C4.ogg", "Fs5.ogg").
  * Decoded once on first use and kept in memory (about 4 MB).
  */
-class SampleBank(private val context: Context) {
+class SampleBank(private val context: Context) : SampleSource {
     @Volatile private var samples: List<Sample>? = null
 
     fun get(): List<Sample> = samples ?: synchronized(this) {
         samples ?: load().also { samples = it }
     }
 
-    /** The recorded note closest to [pitch]. */
-    fun nearest(pitch: Int): Sample = get().minBy { abs(it.pitch - pitch) }
+    override fun nearest(pitch: Int): Sample = get().minBy { abs(it.pitch - pitch) }
 
     private fun load(): List<Sample> {
         val names = context.assets.list("piano").orEmpty().filter { it.endsWith(".ogg") }

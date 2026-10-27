@@ -5,6 +5,9 @@ import android.media.AudioAttributes
 import android.media.MediaPlayer
 import io.github.carstenkeller.noteplayer.omr.Score
 import java.io.File
+import java.io.FileOutputStream
+import java.nio.ByteBuffer
+import java.nio.ByteOrder
 import kotlin.math.roundToInt
 
 /**
@@ -33,7 +36,7 @@ class ScorePlayer(private val context: Context) {
         // a new file name each time: the old player may still read the previous file
         cleanup()
         val file = File(context.cacheDir, "score_${fileCounter++}.wav")
-        Renderer.writeWav(samples, file)
+        writeWav(samples, file)
         val mp = MediaPlayer()
         mp.setAudioAttributes(
             AudioAttributes.Builder()
@@ -85,4 +88,17 @@ class ScorePlayer(private val context: Context) {
     private fun cleanup() {
         context.cacheDir.listFiles { f -> f.name.startsWith("score_") && f.name.endsWith(".wav") }?.forEach { it.delete() }
     }
+}
+
+/** Writes mono float samples at [Renderer.RATE] as a 16-bit WAV file. */
+private fun writeWav(samples: FloatArray, file: File) {
+    val rate = Renderer.RATE
+    val data = ByteBuffer.allocate(samples.size * 2).order(ByteOrder.LITTLE_ENDIAN)
+    for (v in samples) data.putShort((v.coerceIn(-1f, 1f) * 32767).toInt().toShort())
+    val header = ByteBuffer.allocate(44).order(ByteOrder.LITTLE_ENDIAN)
+    header.put("RIFF".toByteArray()).putInt(36 + samples.size * 2).put("WAVE".toByteArray())
+    header.put("fmt ".toByteArray()).putInt(16).putShort(1.toShort()).putShort(1.toShort())
+        .putInt(rate).putInt(rate * 2).putShort(2.toShort()).putShort(16.toShort())
+    header.put("data".toByteArray()).putInt(samples.size * 2)
+    FileOutputStream(file).use { it.write(header.array()); it.write(data.array()) }
 }

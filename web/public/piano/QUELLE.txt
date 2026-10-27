@@ -1,0 +1,12 @@
+Klavier-Samples / piano samples
+
+Salamander Grand Piano V3, Autor: Alexander Holm
+Quelle: https://archive.org/details/SalamanderGrandPianoV3
+        bezogen über das npm-Paket "@audio-samples/piano-velocity8" 1.0.5
+        (https://github.com/darosh/samples-piano)
+Lizenz der Samples: Creative Commons Attribution 3.0 (CC BY 3.0)
+        https://creativecommons.org/licenses/by/3.0/
+
+Änderungen: mittlere Anschlagstärke (Velocity-Stufe 8), 30 Töne (C, D#, F#, A je Oktave
+und C8), auf 6 Sekunden gekürzt mit Ausblendung, auf Mono und 32 kHz umgerechnet und neu
+als Ogg Vorbis kodiert; für die Web-App weiter als MP3 (80 kbit/s) kodiert.

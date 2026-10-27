@@ -1,4 +1,4 @@
-name: Android build
+name: Build (Android + Web)
 
 on:
   push:
@@ -22,7 +22,7 @@ jobs:
       - uses: gradle/actions/setup-gradle@v4
 
       - name: Tests (Notenerkennung)
-        run: ./gradlew :omr-core:test
+        run: ./gradlew :omr-core:jvmTest
 
       - name: APK bauen
         run: ./gradlew :app:assembleDebug
@@ -53,6 +53,37 @@ jobs:
             Build ${{ github.run_number }} aus Commit ${{ github.sha }} (Branch ${{ github.ref_name }}).
 
             Direkter Download: https://github.com/${{ github.repository }}/releases/download/build-${{ github.run_number }}/${{ steps.apk.outputs.name }}
+
+            Web-App (iPad, Browser): https://carstenkeller.github.io/note-player/
+
+      # --- Web-App (iPad, Browser): die Erkennung als JavaScript, veröffentlicht auf GitHub Pages ---
+      - name: Erkennung für das Web bauen
+        run: ./gradlew :omr-core:jsBrowserProductionLibraryDistribution
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+
+      - name: Web-App bauen
+        working-directory: web
+        run: |
+          npm ci
+          # der Erkennungsstand: ändert er sich, werden gespeicherte Blätter neu erkannt
+          export VITE_ENGINE=$(git rev-parse HEAD:omr-core/src/commonMain)
+          export VITE_BUILD="0.1.${GITHUB_RUN_NUMBER}-${GITHUB_SHA::7}"
+          npm run build
+
+      - name: Web-App veröffentlichen (Branch gh-pages)
+        if: github.event_name != 'pull_request'
+        uses: peaceiris/actions-gh-pages@v4
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          publish_dir: web/dist
+          publish_branch: gh-pages
+          force_orphan: true
+          commit_message: Web-App ${{ github.run_number }}
 
       - uses: actions/upload-artifact@v4
         if: failure()

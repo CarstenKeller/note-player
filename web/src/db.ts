@@ -1,0 +1,129 @@
+// Local storage of the pieces in the browser (IndexedDB). Nothing leaves the device.
+
+/** A saved piece: its sheets in playing order and the sections ("Rubriken") it is filed under. */
+export interface Piece {
+  id: string;
+  name: string;
+  created: number;
+  /** When the piece was last opened (for sorting). */
+  opened: number;
+  categories: string[];
+  /** Ids of the sheets in playing order. */
+  sheets: string[];
+  /** Quarter notes per minute at 100 %; remembered per piece. */
+  bpm?: number;
+  /** Speed of the scroll mode, as quarter notes per minute. */
+  scrollBpm?: number;
+}
+
+/** One sheet: a photo, a picture or a page of a PDF, as it was imported. */
+export interface Sheet {
+  id: string;
+  blob: Blob;
+  /** File name it came from (for saving it again). */
+  name: string;
+}
+
+/** The recognition of a sheet, kept so that a piece opens quickly the next time. */
+export interface Recognized {
+  /** Sheet id. */
+  id: string;
+  /** Version of the recognition; a newer app recognizes the sheet again. */
+  engine: string;
+  width: number;
+  height: number;
+  /** The straightened page as it is shown. */
+  page: Blob;
+  json: string;
+}
+
+const DB_NAME = 'notenspieler';
+const STORES = ['pieces', 'sheets', 'results', 'settings'] as const;
+type Store = (typeof STORES)[number];
+
+let dbPromise: Promise<IDBDatabase> | null = null;
+
+function open(): Promise<IDBDatabase> {
+  if (!dbPromise) {
+    dbPromise = new Promise((resolve, reject) => {
+      const req = indexedDB.open(DB_NAME, 1);
+      req.onupgradeneeded = () => {
+        const db = req.result;
+        for (const s of STORES) if (!db.objectStoreNames.contains(s)) db.createObjectStore(s, { keyPath: s === 'settings' ? 'key' : 'id' });
+      };
+      req.onsuccess = () => resolve(req.result);
+      req.onerror = () => reject(req.error);
+    });
+  }
+  return dbPromise;
+}
+
+function done<T>(req: IDBRequest<T>): Promise<T> {
+  return new Promise((resolve, reject) => {
+    req.onsuccess = () => resolve(req.result);
+    req.onerror = () => reject(req.error);
+  });
+}
+
+async function store(name: Store, mode: IDBTransactionMode = 'readonly'): Promise<IDBObjectStore> {
+  return (await open()).transaction(name, mode).objectStore(name);
+}
+
+async function get<T>(name: Store, id: string): Promise<T | undefined> {
+  return done((await store(name)).get(id)) as Promise<T | undefined>;
+}
+
+async function put(name: Store, value: unknown): Promise<void> {
+  await done((await store(name, 'readwrite')).put(value));
+}
+
+async function del(name: Store, id: string): Promise<void> {
+  await done((await store(name, 'readwrite')).delete(id));
+}
+
+export function newId(): string {
+  return Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
+}
+
+export const db = {
+  async pieces(): Promise<Piece[]> {
+    return done((await store('pieces')).getAll()) as Promise<Piece[]>;
+  },
+  piece: (id: string) => get<Piece>('pieces', id),
+  savePiece: (p: Piece) => put('pieces', p),
+  async deletePiece(p: Piece): Promise<void> {
+    for (const s of p.sheets) {
+      await del('sheets', s);
+      await del('results', s);
+    }
+    await del('pieces', p.id);
+  },
+
+  sheet: (id: string) => get<Sheet>('sheets', id),
+  saveSheet: (s: Sheet) => put('sheets', s),
+  async deleteSheet(id: string): Promise<void> {
+    await del('sheets', id);
+    await del('results', id);
+  },
+
+  result: (id: string) => get<Recognized>('results', id),
+  saveResult: (r: Recognized) => put('results', r),
+
+  async setting<T>(key: string): Promise<T | undefined> {
+    return (await get<{ key: string; value: T }>('settings', key))?.value;
+  },
+  saveSetting: (key: string, value: unknown) => put('settings', { key, value }),
+};
+
+/**
+ * Asks the browser to keep the data even when storage runs low. Safari may otherwise delete the
+ * data of a website that was not used for some weeks (not of an app on the home screen).
+ */
+export async function persist(): Promise<boolean> {
+  try {
+    if (await navigator.storage?.persisted?.()) return true;
+    return (await navigator.storage?.persist?.()) ?? false;
+  } catch {
+    return false;
+  }
+}

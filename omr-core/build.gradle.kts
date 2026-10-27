@@ -1,23 +1,36 @@
 plugins {
-    kotlin("jvm")
-}
-
-java {
-    sourceCompatibility = JavaVersion.VERSION_17
-    targetCompatibility = JavaVersion.VERSION_17
+    kotlin("multiplatform")
 }
 
 kotlin {
-    compilerOptions {
-        jvmTarget.set(org.jetbrains.kotlin.gradle.dsl.JvmTarget.JVM_17)
+    // the Android app uses the JVM variant
+    jvm {
+        testRuns["test"].executionTask.configure {
+            useJUnitPlatform()
+            systemProperty("java.awt.headless", "true")
+        }
+    }
+    // the web app runs the recognition in the browser (in a web worker)
+    js(IR) {
+        moduleName = "omr-core"
+        browser()
+        useEsModules()
+        binaries.library()
+        generateTypeScriptDefinitions()
+    }
+
+    sourceSets {
+        jvmTest.dependencies {
+            implementation(kotlin("test"))
+        }
     }
 }
 
-dependencies {
-    testImplementation(kotlin("test"))
+tasks.withType<org.jetbrains.kotlin.gradle.tasks.KotlinJvmCompile>().configureEach {
+    compilerOptions.jvmTarget.set(org.jetbrains.kotlin.gradle.dsl.JvmTarget.JVM_17)
 }
 
-tasks.test {
-    useJUnitPlatform()
-    systemProperty("java.awt.headless", "true")
+tasks.withType<JavaCompile>().configureEach {
+    sourceCompatibility = "17"
+    targetCompatibility = "17"
 }

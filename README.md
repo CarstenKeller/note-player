@@ -1,8 +1,46 @@
 # Notenspieler
 
-Android-App, die ein Notenblatt aus einem Foto, einem Bild oder einem Video mit
+App, die ein Notenblatt aus einem Foto, einem Bild, einem PDF oder (nur Android) einem Video mit
 durchlaufenden Noten erkennt, das Stück vorspielt und während des Abspielens anzeigt, wo man
-sich gerade befindet.
+sich gerade befindet. Es gibt sie als **Android-App** und als **Web-App** (z. B. für das iPad);
+beide verwenden dieselbe Notenerkennung.
+
+## Web-App (iPad, Browser)
+
+**Adresse: https://carstenkeller.github.io/note-player/**
+
+Am iPad in Safari öffnen und über „Teilen“ → „Zum Home-Bildschirm“ hinzufügen. Dann startet
+sie wie eine App, funktioniert auch offline, und Safari löscht die gespeicherten Stücke nicht
+(bei einer normalen Website kann Safari die Daten nach einigen Wochen ohne Besuch löschen).
+
+- **Notenblatt fotografieren**, **Bilder** oder **PDFs** öffnen. Jede PDF-Seite wird ein Blatt;
+  mehrere Dateien werden in der gewählten Reihenfolge zu einem Stück.
+- Die Erkennung läuft **im Browser auf dem Gerät** (kein Server, nichts wird hochgeladen).
+  Ein großes Foto braucht einige Sekunden; das Ergebnis wird gespeichert, beim nächsten Öffnen
+  ist das Stück sofort da. Nach einer verbesserten Erkennung (neue Version) werden die Blätter
+  beim Öffnen einmal neu erkannt.
+- **Bibliothek**: Alle Stücke werden lokal im Browser gespeichert (IndexedDB). Jedes Stück
+  kann in beliebig viele **Rubriken** einsortiert werden (z. B. „Pop“, „Klassik“, „Übung“);
+  Suche nach Name und Rubrik, Filter nach Rubrik, Sortierung nach Name oder zuletzt geöffnet.
+  Name und Rubriken über „⋯“ in der Liste oder durch Tippen auf den Namen im Stück.
+- **Sicherung**: „Sicherung speichern“ legt alle Stücke (Originalbilder, Namen, Rubriken,
+  Tempo) in einer ZIP-Datei ab, „Sicherung laden“ übernimmt sie wieder – auch auf einem
+  anderen Gerät. Stücke, die schon da sind, bleiben unverändert.
+- **Abspielen** wie in der Android-App: Klang (Flügel, E-Piano, Orgel, Harfe), Tempo in Prozent,
+  Grundtempo je Stück, Gesangsstimme zuschaltbar, klingende Noten werden markiert, die Ansicht
+  folgt der Musik. Tippen auf eine Note setzt den Startpunkt.
+- **Scrollmodus** zum eigenen Spielen: Die Noten laufen gleichmäßig nach oben, ohne Ton. Die
+  Geschwindigkeit wird als Tempo (♩ = …) eingestellt: Bei dem eingestellten Tempo ist das
+  Stück zu Ende gescrollt, wenn es zu Ende gespielt wäre (berechnet aus den erkannten Noten).
+  Antippen der Noten hält an bzw. setzt fort; mit dem Finger lässt sich jederzeit
+  nachschieben, das Scrollen macht dort weiter. Der Bildschirm bleibt dabei an (sofern der
+  Browser es erlaubt).
+- **Blätter** eines Stücks: weitere anhängen, Reihenfolge ändern, ersetzen, entfernen,
+  Original speichern.
+- **Zoom** mit zwei Fingern oder unter „⚙“ → „Ansicht“.
+
+Noch nicht in der Web-App (nur Android): Videos mit scrollenden Noten, Umrahmen aller
+erkannten Noten, Cursor in der Zeile.
 
 ## Funktionen
 
@@ -102,7 +140,7 @@ Erkannt werden:
 Geprüft habe ich das nur mit Notensatz, der mit [Verovio](https://www.verovio.org) (Schriftart
 Bravura) gerendert wurde, teils zusätzlich „wie ein Handyfoto“ verzerrt: Perspektive,
 Drehung, Unschärfe, ungleichmäßiges Licht, Rauschen, JPEG. Diese Bilder liegen als
-Regressionstests in `omr-core/src/test/resources`.
+Regressionstests in `omr-core/src/jvmTest/resources`.
 
 - Bei ausreichender Auflösung (Abstand der Notenlinien ≈ 18 px oder mehr) wurden die
   Teststücke vollständig richtig erkannt.
@@ -122,8 +160,9 @@ Tipps:
 
 | Modul | Inhalt |
 |---|---|
-| `omr-core` | Reines Kotlin/JVM ohne Android-Abhängigkeiten: Binarisierung (Sauvola), Schräglagenkorrektur, Notenlinienerkennung und -entfernung, Symbolerkennung, Haltebögen, Zeitberechnung, Zusammensetzen von Videobildern (`VideoStitcher`), MIDI-Export. Mit Unit-Tests. |
-| `app` | Android-App (Jetpack Compose): Kamera/Galerie/Video (`MediaCodec`), Anzeige mit Markierung, Klangerzeugung (Klavier-Samples bzw. Synthese) und Wiedergabe über `MediaPlayer`. |
+| `omr-core` | Kotlin Multiplatform (JVM und JavaScript) ohne Android-Abhängigkeiten: Binarisierung (Sauvola), Schräglagenkorrektur, Notenlinienerkennung und -entfernung, Symbolerkennung, Haltebögen, Triolen, Zeitberechnung, Zusammensetzen von Videobildern (`VideoStitcher`), MIDI-Export, Klangerzeugung (`audio/Renderer`). `jsMain/WebApi.kt` ist die Schnittstelle für die Web-App. Unit-Tests in `jvmTest`. |
+| `app` | Android-App (Jetpack Compose): Kamera/Galerie/Video (`MediaCodec`), Anzeige mit Markierung, Dekodieren der Klavier-Samples und Wiedergabe über `MediaPlayer`. |
+| `web` | Web-App (TypeScript, Preact, Vite): Bibliothek mit Rubriken in IndexedDB, PDF-Import (pdf.js), Erkennung und Klangerzeugung in einem Web Worker (Kotlin-Kern als JavaScript), Wiedergabe mit Web Audio, Scrollmodus, Offline-Betrieb (Service Worker). |
 
 Ablauf der Erkennung (`Omr.recognize`):
 
@@ -145,9 +184,18 @@ Ablauf der Erkennung (`Omr.recognize`):
 Voraussetzungen: JDK 17 und das Android SDK (z. B. über Android Studio).
 
 ```bash
-./gradlew :omr-core:test        # Tests der Notenerkennung
+./gradlew :omr-core:jvmTest     # Tests der Notenerkennung
 ./gradlew :app:assembleDebug    # APK: app/build/outputs/apk/debug/app-debug.apk
+
+# Web-App (zusätzlich Node.js 22)
+./gradlew :omr-core:jsBrowserProductionLibraryDistribution   # Erkennung als JavaScript
+cd web && npm ci && npm run dev                               # Entwicklung
+cd web && npm run build                                       # fertige Dateien in web/dist
 ```
+
+Die Web-App wird bei jedem Push auf den Branch `gh-pages` gelegt und von GitHub Pages
+ausgeliefert (einmalig in den Repository-Einstellungen unter „Pages“ die Quelle „Deploy from a
+branch“, Branch `gh-pages`, Ordner `/ (root)` wählen).
 
 Bei jedem Push baut GitHub Actions die APK (`.github/workflows/android.yml`) und
 veröffentlicht sie als Release `build-<Nummer>` mit eindeutigem Dateinamen
@@ -164,4 +212,7 @@ Mindestversion: Android 8.0 (API 26).
 Die Klavier-Samples in `app/src/main/assets/piano` sind das **Salamander Grand Piano V3**
 von Alexander Holm (https://archive.org/details/SalamanderGrandPianoV3), Lizenz **CC BY 3.0**,
 bezogen über das npm-Paket `@audio-samples/piano-velocity8`. Sie wurden ausgewählt, gekürzt und
-neu kodiert; Details in `app/src/main/assets/piano/QUELLE.txt`.
+neu kodiert; Details in `app/src/main/assets/piano/QUELLE.txt` (für die Web-App als MP3 in
+`web/public/piano`).
+
+Die Web-App verwendet pdf.js (Apache 2.0), Preact (MIT) und fflate (MIT).
