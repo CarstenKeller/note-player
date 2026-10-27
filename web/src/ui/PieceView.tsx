@@ -189,8 +189,8 @@ export function PieceView(props: { piece: Piece; allCategories: string[]; onBack
     if (!scrolling) return;
     const c = container.current!;
     keepAwake(true);
-    // speed: the whole piece in the time it lasts at the chosen tempo; without recognized
-    // music, about two lines of a page per minute
+    // speed: the whole piece in the time it lasts at the chosen tempo (the empty space below
+    // the music lets the last line move up); without recognized music, a screen in two minutes
     const pixelsPerSecond = () => {
       const travel = Math.max(1, c.scrollHeight - c.clientHeight * 0.6);
       const seconds = score.totalTicks > 0 ? secondsOf(score.totalTicks, scrollBpm, score.tpq) : 120 * (inner.current!.clientHeight / c.clientHeight);
@@ -420,7 +420,7 @@ export function PieceView(props: { piece: Piece; allCategories: string[]; onBack
       )}
 
       <div class="pages" ref={container} onTouchStart={onTouchStart} onTouchMove={onTouchMove} onTouchEnd={onTouchEnd} onTouchCancel={onTouchEnd}>
-        <div class="pages-inner" ref={inner} style={{ width: `${zoom * 100}%` }}>
+        <div class="pages-inner" ref={inner} style={{ width: `${zoom * 100}%`, paddingBottom: mode === 'scroll' ? '60vh' : 0 }}>
           {sheets.map((s, i) => (
             <div class="page" key={s.id} ref={(el) => (pageEls.current[i] = el)} onClick={(e) => tapPage(i, e)}>
               {s.shown ? (
