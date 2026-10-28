@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'preact/hooks';
 import { db, persist, type Piece } from '../db';
-import { download, exportAll, importAll } from '../backup';
+import { BackupStatus } from './BackupStatus';
 import { PieceDialog, collator } from './PieceDialog';
 
 const NONE = '\u0000ohne';
@@ -17,11 +17,9 @@ export function Library(props: {
   const [artist, setArtist] = useState<string>('');
   const [sort, setSort] = useState<Sort>('name');
   const [editing, setEditing] = useState<Piece | null>(null);
-  const [message, setMessage] = useState<string | null>(null);
   const [persisted, setPersisted] = useState<boolean | null>(null);
   const camera = useRef<HTMLInputElement>(null);
   const files = useRef<HTMLInputElement>(null);
-  const backup = useRef<HTMLInputElement>(null);
 
   const reload = async () => setPieces(await db.pieces());
   useEffect(() => {
@@ -64,35 +62,11 @@ export function Library(props: {
     if (list.length) props.onImport(list);
   };
 
-  const saveBackup = async () => {
-    setMessage('Sicherung wird erstellt …');
-    try {
-      const blob = await exportAll();
-      download(blob, `Notenspieler-Sicherung-${new Date().toISOString().slice(0, 10)}.zip`);
-      setMessage(null);
-    } catch (e) {
-      setMessage('Sicherung fehlgeschlagen: ' + (e as Error).message);
-    }
-  };
-
-  const loadBackup = async (input: HTMLInputElement) => {
-    const f = input.files?.[0];
-    input.value = '';
-    if (!f) return;
-    setMessage('Sicherung wird gelesen …');
-    try {
-      const n = await importAll(f);
-      await reload();
-      setMessage(n === 1 ? '1 Stück übernommen.' : `${n} Stücke übernommen.`);
-    } catch (e) {
-      setMessage('Die Sicherung konnte nicht gelesen werden: ' + (e as Error).message);
-    }
-  };
-
   return (
     <div class="library">
       <header class="bar">
         <h1>Notenspieler</h1>
+        <BackupStatus settings onRestored={() => void reload()} />
         <span class="spacer" />
         <button class="primary" onClick={() => camera.current?.click()}>📷 Foto</button>
         <button class="primary" onClick={() => files.current?.click()}>＋ Bilder / PDF</button>
@@ -153,10 +127,6 @@ export function Library(props: {
       {pieces.length > 0 && shown.length === 0 && <div class="empty"><p>Kein Stück gefunden.</p></div>}
 
       <footer class="footer">
-        <button onClick={saveBackup} disabled={pieces.length === 0}>Sicherung speichern</button>
-        <button onClick={() => backup.current?.click()}>Sicherung laden</button>
-        <input ref={backup} type="file" accept=".zip,application/zip" hidden onChange={(e) => loadBackup(e.currentTarget)} />
-        {message && <span class="muted">{message}</span>}
         <span class="spacer" />
         <span class="muted small">
           {persisted === false && 'Tipp: Zum Home-Bildschirm hinzufügen, damit die Stücke dauerhaft gespeichert bleiben. · '}

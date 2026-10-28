@@ -2,6 +2,7 @@ import { render } from 'preact';
 import { useEffect, useState } from 'preact/hooks';
 import { db, newId, type Piece } from './db';
 import { importFiles, nameFor } from './importer';
+import { initBackup } from './autobackup';
 import { Library } from './ui/Library';
 import { PieceView } from './ui/PieceView';
 import './styles.css';
@@ -50,6 +51,7 @@ function App() {
   );
 }
 
+void initBackup();
 render(<App />, document.getElementById('app')!);
 
 // offline use: the service worker keeps all files of the app

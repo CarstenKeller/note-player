@@ -7,6 +7,7 @@ import { joinSheets, secondsOf, type Box, type EventJ, type PieceEvent, type Pie
 import { keepAwake } from '../wakelock';
 import { download } from '../backup';
 import { PieceDialog } from './PieceDialog';
+import { BackupStatus } from './BackupStatus';
 
 /** Without a setting, 100 % means 120 quarter notes per minute (tempo marks are not read). */
 const DEFAULT_BPM = 120;
@@ -427,8 +428,8 @@ export function PieceView(props: { piece: Piece; allCategories: string[]; allArt
   }, [score, startTick, measureOf]);
   /** Recognized notes and rests per page, for the frames (the vocal line too, even if not played). */
   const notesBySheet = useMemo(
-    () => sheets.map((s) => (outline && s.shown ? s.shown.result.score.events : [])),
-    [outline, sheets],
+    () => sheets.map((s) => (outline && mode === 'play' && s.shown ? s.shown.result.score.events : [])),
+    [outline, sheets, mode],
   );
 
   const mark = (e: EventJ, shown: ShownSheet, cls: string, k: number | string) => {
@@ -465,6 +466,7 @@ export function PieceView(props: { piece: Piece; allCategories: string[]; allArt
         </button>
         <span class="spacer" />
         <span class="muted small status">{status}</span>
+        <BackupStatus />
         <button onClick={() => setSheetMenu(!sheetMenu)}>Blätter ▾</button>
       </header>
 
@@ -547,7 +549,7 @@ export function PieceView(props: { piece: Piece; allCategories: string[]; allArt
             </label>
           )}
           <label class="row">
-            <span>Erkannte Noten umrahmen</span>
+            <span>Erkannte Noten umrahmen (beim Abspielen)</span>
             <span class="spacer" />
             <input type="checkbox" checked={outline} onChange={(e) => setSetting('outline', e.currentTarget.checked, setOutline)} />
           </label>

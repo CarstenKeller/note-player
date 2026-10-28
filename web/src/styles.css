@@ -43,7 +43,7 @@ button.danger { background: var(--danger); border-color: var(--danger); color: #
 button.danger-outline { color: var(--danger); }
 button.big { min-width: 64px; font-size: 22px; }
 
-input:not([type='checkbox']) {
+input:not([type='checkbox']):not([type='radio']) {
   min-height: 44px;
   padding: 0 12px;
   border: 1px solid var(--line);
@@ -57,7 +57,7 @@ input[type='checkbox'] { width: 24px; height: 24px; }
 .muted { color: var(--muted); }
 .small { font-size: 14px; }
 .row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
-.row input { flex: 1; min-width: 160px; }
+.row input:not([type='checkbox']):not([type='radio']) { flex: 1; min-width: 160px; }
 
 .bar {
   display: flex;
@@ -221,3 +221,17 @@ input[type='checkbox'] { width: 24px; height: 24px; }
 }
 .pieces .artist { font-weight: 400; color: var(--muted); }
 .search select { flex: 0 1 220px; }
+
+/* --- backup state --- */
+.backup-status { min-width: 36px; min-height: 36px; padding: 0; border-radius: 18px; font-weight: 700; }
+.backup-status.ok { color: #1e8a3c; border-color: #9fd3ad; background: #eef8f1; }
+.backup-status.saving { color: var(--muted); }
+.backup-status.unsaved, .backup-status.error { color: #b45309; border-color: #f0c27b; background: #fff6e0; }
+.backup-status.error { color: var(--danger); border-color: #e8a29d; background: #fdecea; }
+.backup-line { display: flex; gap: 10px; align-items: flex-start; }
+.backup-line .backup-symbol { font-weight: 700; }
+.backup-line.ok .backup-symbol { color: #1e8a3c; }
+.backup-line.unsaved .backup-symbol { color: #b45309; }
+.backup-line.error .backup-symbol { color: var(--danger); }
+.dialog label.row { flex-wrap: nowrap; align-items: flex-start; }
+.dialog input[type='radio'] { width: 22px; height: 22px; flex: none; margin-top: 2px; }

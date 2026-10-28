@@ -83,6 +83,22 @@ async function del(name: Store, id: string): Promise<void> {
   await done((await store(name, 'readwrite')).delete(id));
 }
 
+/**
+ * Listeners for changes that a backup should contain: a piece added or deleted, its name,
+ * performer, sections or sheets changed (not: opened, tempo).
+ */
+const changeListeners: (() => void)[] = [];
+
+export function onSignificantChange(listener: () => void): void {
+  changeListeners.push(listener);
+}
+
+function significantChange(): void {
+  for (const l of changeListeners) l();
+}
+
+const essentials = (p: Piece) => JSON.stringify([p.name, p.artist ?? '', p.categories, p.sheets]);
+
 export function newId(): string {
   return Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
 }
@@ -92,13 +108,18 @@ export const db = {
     return done((await store('pieces')).getAll()) as Promise<Piece[]>;
   },
   piece: (id: string) => get<Piece>('pieces', id),
-  savePiece: (p: Piece) => put('pieces', p),
+  async savePiece(p: Piece): Promise<void> {
+    const old = await get<Piece>('pieces', p.id);
+    await put('pieces', p);
+    if (!old || essentials(old) !== essentials(p)) significantChange();
+  },
   async deletePiece(p: Piece): Promise<void> {
     for (const s of p.sheets) {
       await del('sheets', s);
       await del('results', s);
     }
     await del('pieces', p.id);
+    significantChange();
   },
 
   sheet: (id: string) => get<Sheet>('sheets', id),

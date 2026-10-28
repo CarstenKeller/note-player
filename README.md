@@ -24,9 +24,18 @@ sie wie eine App, funktioniert auch offline, und Safari löscht die gespeicherte
   einsortiert werden (z. B. „Pop“, „Klassik“, „Übung“). Suche nach Name, Interpret und Rubrik,
   Filter nach Rubrik und Interpret, Sortierung nach Name, Interpret oder zuletzt geöffnet.
   Bearbeiten über „⋯“ in der Liste oder durch Tippen auf den Namen im Stück.
-- **Sicherung**: „Sicherung speichern“ legt alle Stücke (Originalbilder, Namen, Rubriken,
-  Tempo) in einer ZIP-Datei ab, „Sicherung laden“ übernimmt sie wieder – auch auf einem
-  anderen Gerät. Stücke, die schon da sind, bleiben unverändert.
+- **Sicherung** (Symbol oben neben dem Titel, Einstellungen unter „⚙“): Nach jeder wichtigen
+  Änderung (Stück neu, gelöscht, Name, Interpret, Rubriken oder Blätter geändert) wird eine
+  ZIP-Datei mit allen Stücken erstellt (Originalbilder, Namen, Interpreten, Rubriken, Tempo).
+  ✓ (grün) = alles gesichert, ⚠ = noch nicht gesichert oder fehlgeschlagen (antippen zeigt den
+  Grund und „Jetzt sichern“).
+  - In Chrome/Edge wird der Speicherort einmal gewählt, danach speichert die App automatisch.
+  - Safari (iPad, iPhone, Mac) erlaubt Web-Seiten kein selbständiges Schreiben in Dateien
+    (File System Access API nicht unterstützt). Dort wird die Datei im Hintergrund vorbereitet
+    und mit einem Tippen auf „Jetzt sichern“ gespeichert – über „Teilen“ → „In Dateien sichern“
+    (Ort frei wählbar, z. B. iCloud Drive) oder als Download.
+  - „Sicherung laden“ übernimmt die Stücke wieder, auch auf einem anderen Gerät; vorhandene
+    Stücke bleiben unverändert.
 - **Abspielen** wie in der Android-App: Klang (Flügel, E-Piano, Orgel, Harfe), Tempo in Prozent,
   Grundtempo je Stück, Gesangsstimme zuschaltbar, klingende Noten werden markiert, die Ansicht
   folgt der Musik. Der Klang wird gleich nach der Erkennung im Hintergrund vorbereitet, damit
@@ -35,8 +44,8 @@ sie wie eine App, funktioniert auch offline, und Safari löscht die gespeicherte
 - **Startstelle**: Eine Note antippen – sie wird blau markiert, unten steht „ab Takt n ✕“,
   und ▶ spielt ab dort. „✕“ setzt wieder auf den Anfang. Während des Abspielens springt
   Antippen sofort an die Stelle.
-- **Erkannte Noten umrahmen** (unter „⚙“, standardmäßig an): zeigt, was gelesen wurde – auch
-  in der Gesangsstimme, wenn sie nicht mitgespielt wird.
+- **Erkannte Noten umrahmen** (unter „⚙“, standardmäßig an, nur im Abspielmodus): zeigt, was
+  gelesen wurde – auch in der Gesangsstimme, wenn sie nicht mitgespielt wird.
 - **Seitenränder ausblenden** (unter „⚙“, standardmäßig an): Kopf- und Fußzeilen, Seitenzahlen
   und leere Ränder zwischen den Seiten werden weggelassen (nur der Bereich der Notenzeilen mit
   etwas Platz darüber und darunter); die erste Seite behält ihren Titel. So laufen die Seiten
