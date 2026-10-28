@@ -1,0 +1,12 @@
+Gitarren-Samples / guitar samples
+
+Akustikgitarre aus "tonejs-instruments" von Nicholaus Brosowsky
+(https://github.com/nbrosowsky/tonejs-instruments), bezogen über das npm-Paket
+"tonejs-instrument-guitar-acoustic-mp3" 1.1.2 (https://github.com/Makefully-Studios/tonejs-instruments).
+Laut Paket stammen die Aufnahmen aus gemeinfreien Quellen und wurden bearbeitet (Stille
+gekürzt, Lautstärke angeglichen, Rauschen entfernt).
+Lizenz der Samples: Creative Commons Attribution 3.0 (CC BY 3.0)
+        https://creativecommons.org/licenses/by/3.0/
+
+Änderungen: auf 4,5 Sekunden gekürzt mit Ausblendung, auf Mono und 32 kHz umgerechnet und neu
+als MP3 (80 kbit/s) kodiert.
