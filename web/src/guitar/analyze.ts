@@ -220,3 +220,54 @@ export function strums(c: ChordMark, pattern: StrumPattern): { start: number; du
   }
   return out;
 }
+
+export interface SheetMarks {
+  /** Tempo marks ("♩ = 98") in ticks of the sheet. */
+  tempos: { tick: number; bpm: number }[];
+  /** "Capo fret 2", "Kapodaster 3. Bund", "Capo II": the fret of the capo. */
+  capo: number | null;
+}
+
+const ROMAN: Record<string, number> = { I: 1, II: 2, III: 3, IV: 4, V: 5, VI: 6, VII: 7, VIII: 8, IX: 9, X: 10, XI: 11, XII: 12 };
+
+/** Tempo marks and the capo, read from the text of a sheet. */
+export function readMarks(lines: TextLine[], score: ScoreJ | null, staffSpace: number): SheetMarks {
+  const tempos: SheetMarks['tempos'] = [];
+  let capo: number | null = null;
+  const ss = staffSpace || 10;
+  for (const l of lines) {
+    const text = lineText(l);
+    // the note symbol is often lost (music font) or read as "J": "= 98", "J = 98", "♩=98", "98 BPM"
+    // (several marks can stand in one line of text, above different measures)
+    const re = /(?:^|[\s♩♪𝅘𝅥Jjd(])=\s*(\d{2,3})(?!\d)|(\d{2,3})\s*bpm\b/gi;
+    const found = [...text.matchAll(re)];
+    // a sentence with numbers is no tempo mark: little text besides the marks
+    const rest = text.replace(re, '').replace(/[^A-Za-zÄÖÜäöü]/g, '');
+    for (const m of rest.length <= 25 ? found : []) {
+      const bpm = Number(m[1] ?? m[2]);
+      if (bpm < 30 || bpm > 260) continue;
+      const x = l.chars[(m.index ?? 0) + (m[0].length - m[0].trimStart().length)]?.x0 ?? l.chars[0]?.x0 ?? 0;
+      let tick = 0;
+      if (score && score.events.length > 0) {
+        const sys = score.systems
+          .map((s) => ({ s, gap: s.box[1] - l.y1 }))
+          .filter(({ gap }) => gap > -0.5 * ss && gap < 14 * ss)
+          .sort((a, b) => a.gap - b.gap)[0]?.s;
+        if (!sys) continue;
+        // a tempo change applies from the start of the measure it stands above
+        const inSystem = score.events.filter((e) => e.system === sys.index);
+        const near = inSystem.filter((e) => e.box[0] >= x - 3 * ss).sort((a, b) => a.box[0] - b.box[0])[0] ?? inSystem[inSystem.length - 1];
+        tick = near ? Math.min(...inSystem.filter((e) => e.measure === near.measure).map((e) => e.start)) : sys.start;
+      }
+      tempos.push({ tick, bpm });
+    }
+    const c = /\b(?:capo|kapo(?:daster)?)\b[^0-9IVX]{0,12}(\d{1,2}|[IVX]{1,4})\b|(\d{1,2})\.?\s*(?:bund|fret)\b[^.]{0,12}\b(?:capo|kapo)/i.exec(text);
+    if (c && capo === null) {
+      const v = c[1] ?? c[2];
+      const n = /^\d+$/.test(v) ? Number(v) : ROMAN[v.toUpperCase()];
+      if (n >= 1 && n <= 12) capo = n;
+    }
+  }
+  tempos.sort((a, b) => a.tick - b.tick);
+  return { tempos, capo };
+}

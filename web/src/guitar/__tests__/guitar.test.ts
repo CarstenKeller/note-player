@@ -72,3 +72,29 @@ describe('chords above staves', () => {
     expect(strums(g.chords[0], 'eighth').map((s) => s.start + (s.strum > 0 ? 'v' : '^')).join(' ')).toBe('0v 240^ 480v 720^ 960v 1200^ 1440v 1680^');
   });
 });
+
+describe('tempo marks and capo', () => {
+  it('reads a tempo mark without the note symbol (lost in PDFs) and a capo', async () => {
+    const { readMarks } = await import('../analyze');
+    const m = readMarks(plain(' = 98\nIntro\n*Capo fret 2\nAll chords relative to capo'), null, 0);
+    expect(m.tempos).toEqual([{ tick: 0, bpm: 98 }]);
+    expect(m.capo).toBe(2);
+    expect(readMarks(plain('Kapodaster 3. Bund'), null, 0).capo).toBe(3);
+    expect(readMarks(plain('Capo II'), null, 0).capo).toBe(2);
+    expect(readMarks(plain('J = 120 Moderately'), null, 0).tempos[0].bpm).toBe(120);
+    // a sentence with "=" and numbers is no tempo mark
+    expect(readMarks(plain('Track 12 of the album with a total length that is = 120 minutes long'), null, 0).tempos).toEqual([]);
+  });
+});
+
+describe('tempo map', () => {
+  it('converts ticks and seconds with tempo changes', async () => {
+    const { TempoMap } = await import('../../score');
+    const t = new TempoMap([{ tick: 0, bpm: 60 }, { tick: 960, bpm: 120 }], 480);
+    expect(t.seconds(960)).toBeCloseTo(2);
+    expect(t.seconds(1920)).toBeCloseTo(3);
+    expect(t.tick(3)).toBeCloseTo(1920);
+    expect(t.tick(1)).toBeCloseTo(480);
+    expect(t.scaled(2).seconds(1920)).toBeCloseTo(1.5);
+  });
+});

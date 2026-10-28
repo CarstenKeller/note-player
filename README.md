@@ -36,6 +36,9 @@ sie wie eine App, funktioniert auch offline, und Safari löscht die gespeicherte
     (Ort frei wählbar, z. B. iCloud Drive) oder als Download.
   - „Sicherung laden“ übernimmt die Stücke wieder, auch auf einem anderen Gerät; vorhandene
     Stücke bleiben unverändert.
+- **Tempoangaben** vom Blatt („♩ = 98“, auch Tempowechsel mitten im Stück) werden gelesen, wenn
+  das Blatt Text enthält (PDF, eingefügter Text) oder im Gitarren-Modus per Texterkennung; das
+  Grundtempo richtet sich danach, solange es nicht von Hand eingestellt wurde.
 - **Abspielen** wie in der Android-App: Klang (Flügel, E-Piano, Orgel, Harfe), Tempo in Prozent,
   Grundtempo je Stück, Gesangsstimme zuschaltbar, klingende Noten werden markiert, die Ansicht
   folgt der Musik. Der Klang wird gleich nach der Erkennung im Hintergrund vorbereitet, damit
@@ -68,7 +71,11 @@ gehabt. Im Gitarren-Modus:
 
 - **Klang**: aufgenommene Akustikgitarre. Akkorde werden angeschlagen (Saiten leicht versetzt);
   „Anschlag“: einmal je Akkord, jede Viertel abwärts oder Achtel ab und auf. „Akkorde
-  anschlagen“ und „Noten und Tabs spielen“ lassen sich einzeln abschalten.
+  anschlagen“ und „Noten und Tabs spielen“ lassen sich einzeln abschalten. Ist die
+  Gitarrenstimme mit Tabulatur ausgeschrieben, sind die Akkorde zunächst aus (die Akkordnamen
+  dienen dort nur der Orientierung).
+- **Kapodaster**: „Capo fret 2“, „Capo II“, „Kapodaster 3. Bund“ auf dem Blatt wird erkannt;
+  Noten, Akkorde und Tabs klingen dann so viele Halbtöne höher (abschaltbar).
 - **Noten + TAB** (Gitarrenbuch): Tabulatur-Zeilen (sechs Linien) werden erkannt und nicht als
   Noten gelesen; gespielt wird die Notenzeile darüber, eine Oktave tiefer als notiert (wie bei
   Gitarrennoten üblich). Die Bundzahlen der Tabulatur werden nicht gelesen.
@@ -182,8 +189,9 @@ Erkannt werden:
   Haltebögen nicht zu unterscheiden und werden dort wie Haltebögen behandelt
 - Wiederholungen, Volta-Klammern, D.C./D.S.
 - Mehrere Stimmen in einer Notenzeile nur teilweise: Stimmen mit Hals nach oben und nach unten
-  sowie ganze Noten unter einer Melodie klingen jeweils in ihrer eigenen Länge; übereinander
-  stehende hohle Köpfe werden dabei manchmal einen Ton daneben gelesen
+  sowie ganze Noten unter einer Melodie klingen jeweils in ihrer eigenen Länge (liegt ein Ton mit
+  Hals nach unten unter einem Ton mit Hals nach oben, hat jede Stimme ihre eigene Zeitachse);
+  übereinander stehende hohle Köpfe werden dabei manchmal einen Ton daneben gelesen
 - Schlüssel- oder Tonartwechsel mitten in der Zeile
 - Vorschlagsnoten, Verzierungen, Dynamik
 

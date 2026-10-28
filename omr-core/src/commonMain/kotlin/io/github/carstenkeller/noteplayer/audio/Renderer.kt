@@ -21,6 +21,31 @@ interface SampleSource {
     fun nearest(pitch: Int): Sample
 }
 
+/**
+ * Tempo changes: from tick [ticks] on, [bpm] quarter notes per minute (the first entry should
+ * be at tick 0). Converts musical time (ticks) into seconds.
+ */
+class TempoMap(private val ticks: IntArray, private val bpm: DoubleArray, private val tpq: Int) {
+    init {
+        require(ticks.isNotEmpty() && ticks.size == bpm.size)
+    }
+
+    fun seconds(tick: Int): Double {
+        var t = 0.0
+        for (i in ticks.indices) {
+            val from = if (i == 0) 0 else ticks[i]
+            val to = if (i + 1 < ticks.size) ticks[i + 1] else Int.MAX_VALUE
+            if (tick <= from) break
+            t += (minOf(tick, to) - from) * 60.0 / (bpm[i] * tpq)
+        }
+        return t
+    }
+
+    companion object {
+        fun constant(bpm: Int, tpq: Int) = TempoMap(intArrayOf(0), doubleArrayOf(bpm.toDouble()), tpq)
+    }
+}
+
 /** Renders a score to audio (mono, float samples at [RATE]) with one of the [Instrument]s. */
 object Renderer {
     const val RATE = 32_000
@@ -37,14 +62,18 @@ object Renderer {
      * [strum] tells for an event whether its notes are strummed like a guitar chord: 0 = struck
      * together, 1 = downstroke (lowest string first), -1 = upstroke (highest first).
      */
-    fun render(score: Score, bpm: Int, instrument: Instrument, bank: SampleSource, strum: (MusicEvent) -> Int = { 0 }): FloatArray {
-        val tpq = score.ticksPerQuarter
-        val total = secondsOf(score.totalTicks, bpm, tpq) + 2.0
+    fun render(score: Score, bpm: Int, instrument: Instrument, bank: SampleSource, strum: (MusicEvent) -> Int = { 0 }): FloatArray =
+        render(score, TempoMap.constant(bpm, score.ticksPerQuarter), instrument, bank, strum)
+
+    /** As above, with tempo changes. */
+    fun render(score: Score, tempo: TempoMap, instrument: Instrument, bank: SampleSource, strum: (MusicEvent) -> Int = { 0 }): FloatArray {
+        val total = tempo.seconds(score.totalTicks) + 2.0
         val out = FloatArray((total * RATE).toInt() + 1)
         val random = Random(1)
         for (n in notes(score, strum)) {
-            val start = ((secondsOf(n.startTick, bpm, tpq) + n.delay) * RATE).toInt()
-            val length = secondsOf(n.endTick - n.startTick, bpm, tpq) - n.delay
+            val begin = tempo.seconds(n.startTick)
+            val start = ((begin + n.delay) * RATE).toInt()
+            val length = tempo.seconds(n.endTick) - begin - n.delay
             when (instrument) {
                 Instrument.GRAND_PIANO, Instrument.GUITAR -> piano(out, start, length, n.pitch, n.gain, bank)
                 Instrument.ELECTRIC_PIANO -> electricPiano(out, start, length, n.pitch, n.gain)

@@ -2,7 +2,7 @@
 // notes) and played with Web Audio; the musical position follows from the playback time.
 
 import { render, sendSamples, type SampleKind } from './engine';
-import { secondsOf, ticksOf, type PieceScore } from './score';
+import { TempoMap, type PieceScore } from './score';
 
 export const INSTRUMENTS: { id: string; label: string }[] = [
   { id: 'GRAND_PIANO', label: 'Flügel' },
@@ -41,7 +41,7 @@ export class Player {
   private ctx: AudioContext | null = null;
   private samplesLoaded = new Map<SampleKind, Promise<void>>();
   private buffer: AudioBuffer | null = null;
-  private preparedFor: { score: PieceScore; bpm: number; instrument: string } | null = null;
+  private preparedFor: { score: PieceScore; tempo: TempoMap; instrument: string } | null = null;
   private source: AudioBufferSourceNode | null = null;
   private startedAt = 0;
   private startTick = 0;
@@ -93,38 +93,40 @@ export class Player {
    * Renders the sound for [score] (a few seconds for a long piece); nothing if it is ready. It
    * is done ahead, right after the recognition, so that nothing heavy runs when playing starts.
    */
-  prepare(score: PieceScore, bpm: number, instrument: string): Promise<void> {
+  prepare(score: PieceScore, tempo: TempoMap, instrument: string): Promise<void> {
+    const same = (x: { score: PieceScore; tempo: TempoMap; instrument: string }) =>
+      x.score === score && x.tempo.key() === tempo.key() && x.instrument === instrument;
     const p = this.preparedFor;
-    if (p && p.score === score && p.bpm === bpm && p.instrument === instrument && this.buffer) return Promise.resolve();
+    if (p && same(p) && this.buffer) return Promise.resolve();
     const w = this.preparing;
-    if (w && w.score === score && w.bpm === bpm && w.instrument === instrument) return w.done;
-    const done = this.render(score, bpm, instrument);
-    this.preparing = { score, bpm, instrument, done };
+    if (w && same(w)) return w.done;
+    const done = this.render(score, tempo, instrument);
+    this.preparing = { score, tempo, instrument, done };
     done.catch(() => undefined).finally(() => {
       if (this.preparing?.done === done) this.preparing = null;
     });
     return done;
   }
 
-  private preparing: { score: PieceScore; bpm: number; instrument: string; done: Promise<void> } | null = null;
+  private preparing: { score: PieceScore; tempo: TempoMap; instrument: string; done: Promise<void> } | null = null;
 
-  private async render(score: PieceScore, bpm: number, instrument: string): Promise<void> {
+  private async render(score: PieceScore, tempo: TempoMap, instrument: string): Promise<void> {
     this.context();
     await this.loadSamples(instrument === GUITAR ? 'guitar' : 'piano');
-    const { audio, rate } = await render(encode(score), score.bassStaves, score.tpq, bpm, instrument);
+    const { audio, rate } = await render(encode(score), score.bassStaves, tempo, instrument);
     const buffer = this.ctx!.createBuffer(1, Math.max(1, audio.length), rate);
     buffer.copyToChannel(audio, 0);
     // a newer request may have finished first
-    if (this.preparing && this.preparing.score === score && this.preparing.bpm === bpm && this.preparing.instrument === instrument) {
+    if (this.preparing && this.preparing.score === score && this.preparing.tempo === tempo && this.preparing.instrument === instrument) {
       this.buffer = buffer;
-      this.preparedFor = { score, bpm, instrument };
+      this.preparedFor = { score, tempo, instrument };
     }
   }
 
   play(fromTick: number): void {
     if (!this.ctx || !this.buffer || !this.preparedFor) return;
     this.stop();
-    const { bpm, score } = this.preparedFor;
+    const { tempo } = this.preparedFor;
     const src = this.ctx.createBufferSource();
     src.buffer = this.buffer;
     src.connect(this.ctx.destination);
@@ -136,7 +138,7 @@ export class Player {
     };
     this.startTick = fromTick;
     this.startedAt = this.ctx.currentTime;
-    src.start(0, secondsOf(fromTick, bpm, score.tpq));
+    src.start(0, tempo.seconds(fromTick));
     this.source = src;
   }
 
@@ -157,7 +159,7 @@ export class Player {
   /** The musical position now, in ticks. */
   currentTick(): number {
     if (!this.ctx || !this.preparedFor || !this.source) return this.startTick;
-    const { bpm, score } = this.preparedFor;
-    return this.startTick + ticksOf(this.ctx.currentTime - this.startedAt, bpm, score.tpq);
+    const { tempo } = this.preparedFor;
+    return tempo.tick(tempo.seconds(this.startTick) + this.ctx.currentTime - this.startedAt);
   }
 }

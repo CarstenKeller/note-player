@@ -262,6 +262,19 @@ object Omr {
                 if (dot != null && !rest.second) { dur = dur * 3 / 2; used[dot.id] = true }
                 items[si] += Item(c.x0.toDouble(), restBox, emptyList(), dur, fullMeasureRest = rest.second)
             }
+            // a rest that the line removal cut in two (an eighth rest's ball and stroke) is one
+            // rest: two pieces right next to each other at the same height; the shorter value
+            val rests = items[si].filter { it.heads.isEmpty() && !it.fullMeasureRest }.sortedBy { it.x }
+            for (k in 1 until rests.size) {
+                val a = rests[k - 1]
+                val b = rests[k]
+                if (a !in items[si] || b.box.left - a.box.right > 0.4 * d || b.x - a.x > 1.2 * d) continue
+                val overlap = min(a.box.bottom, b.box.bottom) - max(a.box.top, b.box.top)
+                if (overlap < 0.5 * min(a.box.bottom - a.box.top, b.box.bottom - b.box.top)) continue
+                items[si].remove(a)
+                items[si].remove(b)
+                items[si] += Item(a.x, a.box.union(b.box), emptyList(), min(a.duration, b.duration))
+            }
             items[si].sortBy { it.x }
             for (it in items[si]) it.measure = barlines[si].count { b -> b < it.x }
             assignPitches(items[si], staves[si], clefs[si], keys[si])
@@ -289,6 +302,39 @@ object Omr {
         // Notes printed above each other sound together. Items of all staves of a system are
         // grouped into columns by x; a column starts when the previous column of each of its
         // staves has ended (the latest such time wins, so a missed note only causes a local error).
+        // two voices in one staff (a melody with stems up over a bass with stems down): each
+        // voice keeps its own time. A measure has two voices when a note with its stem down
+        // lies below a nearby note with its stem up; in a single voice the stem direction only
+        // follows the pitch, so such a note is never lower.
+        val voiceOf = HashMap<Item, Int>()
+        for ((si, staffItems) in items.withIndex()) {
+            for ((_, list) in staffItems.filter { !it.fullMeasureRest }.groupBy { it.measure }) {
+                val ups = list.filter { it.heads.isNotEmpty() && it.heads.all { h -> h.stemDir == -1 } }
+                val downs = list.filter { it.heads.isNotEmpty() && it.heads.all { h -> h.stemDir == 1 } }
+                var pairs = 0
+                var together = false
+                for (u in ups) for (dn in downs) {
+                    val dx = abs(dn.box.centerX - u.box.centerX)
+                    if (dx < 3 * d && dn.heads.minOf { it.cy } > u.heads.maxOf { it.cy } + 0.25 * d) {
+                        pairs++
+                        if (dx < 1.0 * d) together = true
+                    }
+                }
+                if (pairs < 2 && !together) continue
+                for (it in list) {
+                    val mid = staves[si].lineY(2, it.box.centerX.toDouble())
+                    voiceOf[it] = when {
+                        it.heads.isNotEmpty() && it.heads.all { h -> h.stemDir == -1 } -> 1
+                        it.heads.isNotEmpty() && it.heads.all { h -> h.stemDir == 1 } -> 2
+                        it.heads.isNotEmpty() -> if (it.heads.maxOf { h -> h.cy } < mid) 1 else 2
+                        else -> if (it.box.centerY < mid) 1 else 2 // a rest: above or below the middle
+                    }
+                }
+            }
+        }
+        /** Staff and voice: 0 = the only voice, 1 = upper, 2 = lower. */
+        fun laneOf(si: Int, it: Item) = si * 4 + (voiceOf[it] ?: 0)
+
         fun timing(include: (Int) -> Boolean): Pair<List<MusicEvent>, List<SystemInfo>> {
         val events = ArrayList<MusicEvent>()
         val systems = ArrayList<SystemInfo>()
@@ -328,18 +374,37 @@ object Omr {
                 val after = bars.filter { it > x }.minOrNull() ?: staves[ref].right.toDouble()
                 return max(after - before, 4 * d)
             }
-            val lastCol = HashMap<Int, Int>() // staff -> index of its previous column
+            val lastCol = HashMap<Int, Int>() // staff and voice -> index of its previous column
+            // first column of each measure of a staff (key: staff * 10000 + measure)
+            val measureCol = HashMap<Int, Int>()
             for ((c, col) in columns.withIndex()) {
                 var time = -1
-                for (si in col.map { it.first }.distinct()) {
-                    val pc = lastCol[si] ?: continue
-                    val prev = columns[pc].filter { it.first == si }.map { it.second }
-                    // a whole note followed closely by another note of its staff is held in a
-                    // second voice (the other voice's rests are often not recognized): it does
-                    // not hold up the next note
-                    if (prev.all { isWhole(it) } && colPos[c] - colPos[pc] < 0.6 * measureWidth(colPos[pc])) continue
-                    val shortest = prev.minOf { it.duration }
-                    time = max(time, colTime[pc] + shortest)
+                val lanes = col.map { laneOf(it.first, it.second) }.distinct()
+                for (lane in lanes) {
+                    // a single voice waits for both voices before it, a voice for itself and a
+                    // single voice before it
+                    val waitFor = if (lane % 4 == 0) (0..2).map { lane + it } else listOf(lane, lane - lane % 4)
+                    for (wl in waitFor) {
+                        val pc = lastCol[wl] ?: continue
+                        val prev = columns[pc].filter { laneOf(it.first, it.second) == wl }.map { it.second }
+                        // a whole note followed closely by another note of its staff is held in a
+                        // second voice (the other voice's rests are often not recognized): it does
+                        // not hold up the next note
+                        if (prev.all { isWhole(it) } && colPos[c] - colPos[pc] < 0.6 * measureWidth(colPos[pc])) continue
+                        val shortest = prev.minOf { it.duration }
+                        time = max(time, colTime[pc] + shortest)
+                    }
+                }
+                // the first note of a voice in a measure, near the measure's first column,
+                // starts with the measure (the voices are set a little apart)
+                val polyphonic = lanes.all { it % 4 != 0 }
+                if (polyphonic) {
+                    val (si0, it0) = col.first()
+                    val first = measureCol[si0 * 10000 + it0.measure]
+                    val laneStarted = lanes.any { l -> lastCol[l]?.let { pc -> columns[pc].any { e -> e.second.measure == it0.measure } } == true }
+                    // ... or when only rests stand before it in the measure (the other voice's)
+                    val onlyRests = first != null && (first until c).all { cc -> columns[cc].all { e -> e.second.heads.isEmpty() } }
+                    if (first != null && !laneStarted && (colPos[c] - colPos[first] < 2.5 * d || onlyRests)) time = colTime[first]
                 }
                 if (time < 0 && c > 0) {
                     val prev = columns[c - 1].map { it.second }
@@ -351,9 +416,11 @@ object Omr {
                     }
                 }
                 if (time < 0) time = t
-                if (c > 0) time = max(time, colTime[c - 1])
+                // a single voice never starts before the column on its left; voices keep apart
+                if (c > 0 && !polyphonic) time = max(time, colTime[c - 1])
                 colTime[c] = time
-                for (si in col.map { it.first }.distinct()) lastCol[si] = c
+                for (lane in lanes) lastCol[lane] = c
+                for ((si, it) in col) if (si * 10000 + it.measure !in measureCol) measureCol[si * 10000 + it.measure] = c
                 for ((si, it) in col) {
                     events += MusicEvent(time, it.duration, it.pitches, it.box, si, sys, it.measure, it.holds.filter { p -> p in it.pitches })
                 }
@@ -377,7 +444,7 @@ object Omr {
             val end = if (lastCol.isEmpty()) {
                 events.filter { it.systemIndex == sys }.maxOfOrNull { it.endTick } ?: t
             } else {
-                lastCol.maxOf { (si, pc) -> colTime[pc] + columns[pc].filter { it.first == si }.minOf { it.second.duration } }
+                lastCol.maxOf { (lane, pc) -> colTime[pc] + columns[pc].filter { laneOf(it.first, it.second) == lane }.minOf { it.second.duration } }
             }
             systems += SystemInfo(sys, sysBox, t, end)
             t = end
@@ -1149,11 +1216,30 @@ object Omr {
         // the same size side by side at the same height are something else, e.g. a "C" time
         // signature that the line removal cut in two
         val signs = ArrayList<Component>()
+        // the pieces of each sign (a flat that the line removal cut into stem and bowl)
+        val partsOf = HashMap<Component, List<Component>>()
         var keyCursor = cursor
         // the cursor before the first sign (if the signs turn out to be no key signature)
         var beforeSigns = cursor
-        for (c in own.filter { it.x0 >= cursor - 1 }) {
+        val candidates = own.filter { it.x0 >= cursor - 1 }
+        var k = 0
+        while (k < candidates.size) {
+            var c = candidates[k]
+            var parts = listOf(c)
             if (c.x0 >= keyCursor + 2.2 * d) break
+            if (!accidentalLike(c, d)) {
+                // pieces right next to each other that together have the size of a sign
+                val group = arrayListOf(c)
+                var j = k + 1
+                while (j < candidates.size && candidates[j].x0 <= group.maxOf { it.x1 } + 0.4 * d) group += candidates[j++]
+                val merged = Component(-1).apply { for (g in group) absorb(g) }
+                if (group.size > 1 && accidentalLike(merged, d) && !holdsNote(merged)) {
+                    c = merged
+                    parts = group
+                    k = j - 1
+                }
+            }
+            k++
             if (max(c.width, c.height) < 0.6 * d) { keyCursor = max(keyCursor, c.x1.toDouble()); continue } // specks, clef dots
             if (!accidentalLike(c, d) || holdsNote(c)) break
             val prev = signs.lastOrNull()
@@ -1165,11 +1251,12 @@ object Omr {
             }
             if (signs.isEmpty()) beforeSigns = keyCursor
             signs += c
+            partsOf[c] = parts
             keyCursor = c.x1.toDouble()
         }
         for (c in signs) {
             if (classifyAccidental(img, c) < 0) flats++ else sharps++
-            used[c.id] = true
+            for (p in partsOf.getValue(c)) used[p.id] = true
         }
         cursor = max(cursor, keyCursor)
         val count = min(7, sharps + flats)

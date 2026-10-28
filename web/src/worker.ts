@@ -8,7 +8,7 @@ const omr = WebOmr.getInstance();
 export type Request =
   | { type: 'recognize'; id: number; blob: Blob }
   | { type: 'samples'; id: number; kind: string; pitches: number[]; data: Float32Array[]; rate: number }
-  | { type: 'render'; id: number; kind: string; events: Int32Array; bassStaves: number[]; tpq: number; bpm: number; instrument: string };
+  | { type: 'render'; id: number; kind: string; events: Int32Array; bassStaves: number[]; tpq: number; tempoTicks: Int32Array; tempoBpm: Float64Array; instrument: string };
 
 export type Response =
   | { id: number; ok: true; width?: number; height?: number; page?: Blob; json?: string; audio?: Float32Array; rate?: number }
@@ -71,7 +71,7 @@ self.onmessage = async (e: MessageEvent<Request>) => {
     } else if (req.type === 'render') {
       const bank = samples.get(req.kind);
       if (!bank) throw new Error('Die Klänge sind noch nicht geladen.');
-      const audio = omr.render(req.events, req.bassStaves, req.tpq, req.bpm, req.instrument, bank.pitches, bank.data, bank.rate);
+      const audio = omr.render(req.events, req.bassStaves, req.tpq, req.tempoTicks, req.tempoBpm, req.instrument, bank.pitches, bank.data, bank.rate);
       reply({ id: req.id, ok: true, audio, rate: omr.sampleRate }, [audio.buffer]);
     }
   } catch (err) {

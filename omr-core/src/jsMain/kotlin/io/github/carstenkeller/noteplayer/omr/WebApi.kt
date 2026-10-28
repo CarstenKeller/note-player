@@ -6,6 +6,7 @@ import io.github.carstenkeller.noteplayer.audio.Instrument
 import io.github.carstenkeller.noteplayer.audio.Renderer
 import io.github.carstenkeller.noteplayer.audio.Sample
 import io.github.carstenkeller.noteplayer.audio.SampleSource
+import io.github.carstenkeller.noteplayer.audio.TempoMap
 import kotlin.math.abs
 
 /** Result of [WebOmr.recognize]: the straightened page as gray pixels and the music as JSON. */
@@ -67,7 +68,9 @@ object WebOmr {
         events: IntArray,
         bassStaves: Array<Int>,
         tpq: Int,
-        bpm: Int,
+        /** Tempo changes: from tick [tempoTicks] on, [tempoBpm] quarter notes per minute. */
+        tempoTicks: IntArray,
+        tempoBpm: DoubleArray,
         instrument: String,
         samplePitches: Array<Int>,
         samples: Array<FloatArray>,
@@ -102,7 +105,7 @@ object WebOmr {
             override fun nearest(pitch: Int) = bank.minBy { abs(it.pitch - pitch) }
         }
         val inst = Instrument.entries.firstOrNull { it.name == instrument } ?: Instrument.GRAND_PIANO
-        return Renderer.render(Score(tpq, compact, staves, emptyList()), bpm, inst, source) { strums[it] ?: 0 }
+        return Renderer.render(Score(tpq, compact, staves, emptyList()), TempoMap(tempoTicks, tempoBpm, tpq), inst, source) { strums[it] ?: 0 }
     }
 
     /** The sample rate of [render]. */

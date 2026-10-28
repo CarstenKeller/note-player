@@ -2,7 +2,7 @@
 
 import type { Request, Response } from './worker';
 import { db, type Recognized } from './db';
-import type { SheetResult } from './score';
+import type { SheetResult, TempoMap } from './score';
 import type { TextPiece } from './guitar/text';
 
 /** Version of the recognition; results of another version are recognized again. */
@@ -83,9 +83,11 @@ export function releaseWorker(): void {
   }
 }
 
-export async function render(events: Int32Array, bassStaves: number[], tpq: number, bpm: number, instrument: string) {
+export async function render(events: Int32Array, bassStaves: number[], tempo: TempoMap, instrument: string) {
   const kind: SampleKind = instrument === 'GUITAR' ? 'guitar' : 'piano';
-  const r = await call({ type: 'render', kind, events, bassStaves, tpq, bpm, instrument });
+  const tempoTicks = Int32Array.from(tempo.changes.map((c) => c.tick));
+  const tempoBpm = Float64Array.from(tempo.changes.map((c) => c.bpm));
+  const r = await call({ type: 'render', kind, events, bassStaves, tpq: tempo.tpq, tempoTicks, tempoBpm, instrument });
   return { audio: r.audio!, rate: r.rate! };
 }
 
@@ -93,7 +95,7 @@ export async function render(events: Int32Array, bassStaves: number[], tpq: numb
  * The text on a sheet, in the coordinates of the recognized page: the PDF's text layer or the
  * pasted text; for photos and scans read with text recognition (slow, kept afterwards).
  */
-export async function sheetText(sheetId: string, page: ShownSheet): Promise<TextPiece[]> {
+export async function sheetText(sheetId: string, page: ShownSheet, allowOcr = true): Promise<TextPiece[]> {
   const sheet = await db.sheet(sheetId);
   if (sheet?.text && sheet.w) {
     const f = page.width / sheet.w;
@@ -105,6 +107,7 @@ export async function sheetText(sheetId: string, page: ShownSheet): Promise<Text
   const rec = await db.result(sheetId);
   if (!rec) return [];
   if (rec.ocr) return rec.ocr;
+  if (!allowOcr) return [];
   const { recognizeText, recognizeStrips } = await import('./guitar/ocr');
   // with staves: only the strips above the systems (chord names); else the whole page
   const systems = page.result.score.systems;

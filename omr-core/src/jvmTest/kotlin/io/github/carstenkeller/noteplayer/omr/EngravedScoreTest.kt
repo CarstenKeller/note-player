@@ -212,4 +212,21 @@ class EngravedScoreTest {
             describe(r.score),
         )
     }
+
+    /**
+     * Two voices in one staff (melody with stems up, bass with stems down, ties) above a
+     * tablature, key of two flats, "C" time signature (LilyPond). Each voice keeps its own time:
+     * the long bass notes do not hold up the melody. The flat cut in two by the line removal and
+     * the "C" cut in two are read as key and time signature.
+     */
+    @Test
+    fun twoVoicesAboveTablature() {
+        val r = recognizeFull("two_voices_tab.png")
+        assertEquals(-2, r.score.staves.single().keyFifths)
+        val measures = r.score.events.groupBy { it.measureIndex }.values.map { ev -> ev.maxOf { it.endTick } - ev.minOf { it.startTick } }
+        assertEquals(listOf(1920, 1920, 1920, 1920, 1920, 1920), measures)
+        // bass and melody begin together
+        val first = r.score.events.filter { it.measureIndex == 0 && !it.isRest }.sortedBy { it.startTick }
+        assertEquals(0, first.first { it.pitches.first() < 60 }.startTick)
+    }
 }

@@ -25,8 +25,13 @@ export interface Piece {
 }
 
 export interface GuitarSettings {
-  /** Strum the chords (names above notes or lyrics). */
-  chords: boolean;
+  /**
+   * Strum the chords (names above notes or lyrics). Not set: yes, unless the guitar part is
+   * written out with tablature (then the names are only for orientation).
+   */
+  chords?: boolean;
+  /** Play a capo found on the sheet ("Capo fret 2": everything sounds two semitones higher). */
+  capo?: boolean;
   /** Play the notes and tabs. */
   melody: boolean;
   strum: StrumPattern;
@@ -34,7 +39,7 @@ export interface GuitarSettings {
   beatsPerChord: number;
 }
 
-export const DEFAULT_GUITAR: GuitarSettings = { chords: true, melody: true, strum: 'quarter', beatsPerChord: 4 };
+export const DEFAULT_GUITAR: GuitarSettings = { melody: true, strum: 'quarter', beatsPerChord: 4 };
 
 /** One sheet: a photo, a picture or a page of a PDF, as it was imported. */
 export interface Sheet {
