@@ -4,7 +4,7 @@ import { download, exportAll, importAll } from '../backup';
 import { PieceDialog, collator } from './PieceDialog';
 
 const NONE = '\u0000ohne';
-type Sort = 'name' | 'recent';
+type Sort = 'name' | 'artist' | 'recent';
 
 /** The saved pieces: search, sections ("Rubriken"), and opening new sheets. */
 export function Library(props: {
@@ -14,6 +14,7 @@ export function Library(props: {
   const [pieces, setPieces] = useState<Piece[]>([]);
   const [query, setQuery] = useState('');
   const [category, setCategory] = useState<string | null>(null);
+  const [artist, setArtist] = useState<string>('');
   const [sort, setSort] = useState<Sort>('name');
   const [editing, setEditing] = useState<Piece | null>(null);
   const [message, setMessage] = useState<string | null>(null);
@@ -30,17 +31,27 @@ export function Library(props: {
   }, []);
 
   const categories = useMemo(() => [...new Set(pieces.flatMap((p) => p.categories))].sort(collator.compare), [pieces]);
+  const artists = useMemo(() => [...new Set(pieces.map((p) => p.artist ?? '').filter(Boolean))].sort(collator.compare), [pieces]);
 
   const shown = useMemo(() => {
     const words = query.toLowerCase().split(/\s+/).filter(Boolean);
     return pieces
       .filter((p) => category === null || (category === NONE ? p.categories.length === 0 : p.categories.includes(category)))
+      .filter((p) => !artist || p.artist === artist)
       .filter((p) => {
-        const text = (p.name + ' ' + p.categories.join(' ')).toLowerCase();
+        const text = (p.name + ' ' + (p.artist ?? '') + ' ' + p.categories.join(' ')).toLowerCase();
         return words.every((w) => text.includes(w));
       })
-      .sort((a, b) => (sort === 'name' ? collator.compare(a.name, b.name) : b.opened - a.opened));
-  }, [pieces, query, category, sort]);
+      .sort((a, b) => {
+        if (sort === 'recent') return b.opened - a.opened;
+        if (sort === 'artist') {
+          // pieces without a performer at the end
+          const byArtist = (a.artist ? 0 : 1) - (b.artist ? 0 : 1) || collator.compare(a.artist ?? '', b.artist ?? '');
+          if (byArtist) return byArtist;
+        }
+        return collator.compare(a.name, b.name);
+      });
+  }, [pieces, query, category, artist, sort]);
 
   const chooseSort = (s: Sort) => {
     setSort(s);
@@ -90,9 +101,16 @@ export function Library(props: {
       </header>
 
       <div class="search">
-        <input type="search" placeholder="Stück suchen …" value={query} onInput={(e) => setQuery(e.currentTarget.value)} />
+        <input type="search" placeholder="Stück oder Interpret suchen …" value={query} onInput={(e) => setQuery(e.currentTarget.value)} />
+        {artists.length > 0 && (
+          <select value={artist} onChange={(e) => setArtist(e.currentTarget.value)} aria-label="Interpret">
+            <option value="">Alle Interpreten</option>
+            {artists.map((a) => <option key={a} value={a}>{a}</option>)}
+          </select>
+        )}
         <div class="segmented">
           <button class={sort === 'name' ? 'on' : ''} onClick={() => chooseSort('name')}>A–Z</button>
+          <button class={sort === 'artist' ? 'on' : ''} onClick={() => chooseSort('artist')}>Interpret</button>
           <button class={sort === 'recent' ? 'on' : ''} onClick={() => chooseSort('recent')}>Zuletzt</button>
         </div>
       </div>
@@ -115,7 +133,7 @@ export function Library(props: {
         {shown.map((p) => (
           <li key={p.id} onClick={() => props.onOpen(p)}>
             <div class="info">
-              <div class="name">{p.name}</div>
+              <div class="name">{p.name}{p.artist && <span class="artist"> – {p.artist}</span>}</div>
               <div class="meta">
                 {p.categories.map((c) => <span key={c} class="tag">{c}</span>)}
                 <span class="muted">{p.sheets.length === 1 ? '1 Blatt' : `${p.sheets.length} Blätter`}</span>
@@ -150,9 +168,10 @@ export function Library(props: {
         <PieceDialog
           piece={editing}
           allCategories={categories}
+          allArtists={artists}
           onClose={() => setEditing(null)}
-          onSave={async (name, cats) => {
-            await db.savePiece({ ...editing, name, categories: cats });
+          onSave={async (name, artistName, cats) => {
+            await db.savePiece({ ...editing, name, artist: artistName || undefined, categories: cats });
             setEditing(null);
             await reload();
           }}

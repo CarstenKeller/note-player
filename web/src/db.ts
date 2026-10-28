@@ -8,6 +8,8 @@ export interface Piece {
   /** When the piece was last opened (for sorting). */
   opened: number;
   categories: string[];
+  /** Performer / composer ("Interpret"), optional. */
+  artist?: string;
   /** Ids of the sheets in playing order. */
   sheets: string[];
   /** Quarter notes per minute at 100 %; remembered per piece. */

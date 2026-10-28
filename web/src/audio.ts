@@ -45,8 +45,21 @@ export class Player {
    * Must be called directly in a tap (Safari only allows sound that a tap started).
    */
   unlock(): void {
-    if (!this.ctx) this.ctx = new AudioContext();
-    if (this.ctx.state !== 'running') void this.ctx.resume();
+    const ctx = this.context();
+    if (ctx.state !== 'running') void ctx.resume().catch(() => undefined);
+  }
+
+  /** The audio context; it may stay paused until a tap ([unlock]). */
+  private context(): AudioContext {
+    if (!this.ctx) {
+      const ctx = new AudioContext();
+      // iPadOS can interrupt the sound (another app, a notification): continue when possible
+      ctx.onstatechange = () => {
+        if (this.source && ctx.state !== 'running' && ctx.state !== 'closed') void ctx.resume().catch(() => undefined);
+      };
+      this.ctx = ctx;
+    }
+    return this.ctx;
   }
 
   private loadSamples(): Promise<void> {
@@ -67,17 +80,36 @@ export class Player {
     return this.samplesLoaded;
   }
 
-  /** Renders the sound for [score] (a few seconds for a long piece); nothing if it is ready. */
-  async prepare(score: PieceScore, bpm: number, instrument: string): Promise<void> {
+  /**
+   * Renders the sound for [score] (a few seconds for a long piece); nothing if it is ready. It
+   * is done ahead, right after the recognition, so that nothing heavy runs when playing starts.
+   */
+  prepare(score: PieceScore, bpm: number, instrument: string): Promise<void> {
     const p = this.preparedFor;
-    if (p && p.score === score && p.bpm === bpm && p.instrument === instrument && this.buffer) return;
-    this.unlock();
+    if (p && p.score === score && p.bpm === bpm && p.instrument === instrument && this.buffer) return Promise.resolve();
+    const w = this.preparing;
+    if (w && w.score === score && w.bpm === bpm && w.instrument === instrument) return w.done;
+    const done = this.render(score, bpm, instrument);
+    this.preparing = { score, bpm, instrument, done };
+    done.catch(() => undefined).finally(() => {
+      if (this.preparing?.done === done) this.preparing = null;
+    });
+    return done;
+  }
+
+  private preparing: { score: PieceScore; bpm: number; instrument: string; done: Promise<void> } | null = null;
+
+  private async render(score: PieceScore, bpm: number, instrument: string): Promise<void> {
+    this.context();
     await this.loadSamples();
     const { audio, rate } = await render(encode(score), score.bassStaves, score.tpq, bpm, instrument);
     const buffer = this.ctx!.createBuffer(1, Math.max(1, audio.length), rate);
     buffer.copyToChannel(audio, 0);
-    this.buffer = buffer;
-    this.preparedFor = { score, bpm, instrument };
+    // a newer request may have finished first
+    if (this.preparing && this.preparing.score === score && this.preparing.bpm === bpm && this.preparing.instrument === instrument) {
+      this.buffer = buffer;
+      this.preparedFor = { score, bpm, instrument };
+    }
   }
 
   play(fromTick: number): void {

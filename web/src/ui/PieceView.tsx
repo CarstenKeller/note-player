@@ -1,9 +1,9 @@
 import { useEffect, useMemo, useRef, useState } from 'preact/hooks';
 import { db, type Piece } from '../db';
-import { recognizeSheet, type ShownSheet } from '../engine';
+import { recognizeSheet, releaseWorker, type ShownSheet } from '../engine';
 import { importFiles } from '../importer';
 import { INSTRUMENTS, Player } from '../audio';
-import { joinSheets, secondsOf, type PieceEvent, type PieceScore } from '../score';
+import { joinSheets, secondsOf, type Box, type EventJ, type PieceEvent, type PieceScore } from '../score';
 import { keepAwake } from '../wakelock';
 import { download } from '../backup';
 import { PieceDialog } from './PieceDialog';
@@ -22,7 +22,10 @@ type Mode = 'play' | 'scroll';
 
 const player = new Player();
 
-export function PieceView(props: { piece: Piece; allCategories: string[]; onBack: () => void }) {
+/** Part of a page that is shown: without the empty margins, page numbers and footers. */
+interface Crop { top: number; bottom: number }
+
+export function PieceView(props: { piece: Piece; allCategories: string[]; allArtists: string[]; onBack: () => void }) {
   const [piece, setPiece] = useState(props.piece);
   const [sheets, setSheets] = useState<SheetState[]>(props.piece.sheets.map((id) => ({ id })));
   const [working, setWorking] = useState<string | null>(null);
@@ -30,7 +33,8 @@ export function PieceView(props: { piece: Piece; allCategories: string[]; onBack
 
   const [playing, setPlaying] = useState(false);
   const [preparing, setPreparing] = useState(false);
-  const [tick, setTick] = useState(-1);
+  /** The events sounding now (indices into score.events); only updated when they change. */
+  const [litNow, setLitNow] = useState<number[]>([]);
   const [startTick, setStartTick] = useState(0);
   const [tempoPercent, setTempoPercent] = useState(100);
   const [includeVocals, setIncludeVocals] = useState(false);
@@ -43,6 +47,10 @@ export function PieceView(props: { piece: Piece; allCategories: string[]; onBack
   const [sheetMenu, setSheetMenu] = useState(false);
   const [editing, setEditing] = useState(false);
   const [showWarnings, setShowWarnings] = useState(false);
+  /** Frame all recognized notes (to see what was read). */
+  const [outline, setOutline] = useState(true);
+  /** Leave out the margins of the pages (title area of later pages, footers, page numbers). */
+  const [cropPages, setCropPages] = useState(true);
 
   const container = useRef<HTMLDivElement>(null);
   const inner = useRef<HTMLDivElement>(null);
@@ -61,9 +69,11 @@ export function PieceView(props: { piece: Piece; allCategories: string[]; onBack
   useEffect(() => {
     void savePiece({ ...props.piece, opened: Date.now() });
     void db.setting<string>('instrument').then((i) => i && setInstrument(i));
+    void db.setting<boolean>('outline').then((v) => v !== undefined && setOutline(v));
+    void db.setting<boolean>('crop').then((v) => v !== undefined && setCropPages(v));
     player.onEnded = () => {
       setPlaying(false);
-      setTick(-1);
+      setLitNow([]);
       keepAwake(false);
     };
     return () => {
@@ -78,6 +88,8 @@ export function PieceView(props: { piece: Piece; allCategories: string[]; onBack
     const todo = sheets.findIndex((s) => !s.shown && !s.error);
     if (todo < 0) {
       setWorking(null);
+      // the recognition leaves a lot of memory in the worker: start afresh for the sound
+      releaseWorker();
       return;
     }
     let cancelled = false;
@@ -101,19 +113,49 @@ export function PieceView(props: { piece: Piece; allCategories: string[]; onBack
     ...(s.error ? [`Blatt ${i + 1}: ${s.error}`] : []),
   ]);
   const noteCount = score.events.filter((e) => e.pitches.length > 0).length;
+  /** All sheets are recognized (or failed); before that, the music is not complete. */
+  const ready = sheets.length > 0 && sheets.every((s) => s.shown || s.error);
+
+  /** Measure numbers through the whole piece (for "ab Takt n"). */
+  const measureOf = useMemo(() => {
+    const numbers = new Map<string, number>();
+    for (const e of score.events) {
+      const key = `${e.sheet}/${e.system}/${e.measure}`;
+      if (!numbers.has(key)) numbers.set(key, numbers.size + 1);
+    }
+    return (e: PieceEvent) => numbers.get(`${e.sheet}/${e.system}/${e.measure}`) ?? 1;
+  }, [score]);
+
+  const crops: Crop[] = useMemo(() => sheets.map((s, i) => {
+    const shown = s.shown;
+    if (!shown) return { top: 0, bottom: 1 };
+    const staves = shown.result.score.staves;
+    if (!cropPages || staves.length === 0) return { top: 0, bottom: shown.height };
+    const ss = shown.result.staffSpace;
+    // room for chord names, fingering and notes on ledger lines above and below the staves;
+    // the first page keeps its title
+    const top = i === 0 ? 0 : Math.max(0, Math.min(...staves.map((st) => st.box[1])) - 5 * ss);
+    const bottom = Math.min(shown.height, Math.max(...staves.map((st) => st.box[3])) + 4 * ss);
+    return { top, bottom: Math.max(bottom, top + 1) };
+  }), [sheets, cropPages]);
+
+  // the sound is prepared as soon as the music is complete, so that starting is immediate
+  useEffect(() => {
+    if (ready && noteCount > 0) player.prepare(score, bpm, instrument).catch(() => undefined);
+  }, [ready, score, bpm, instrument]);
 
   // --- playback --------------------------------------------------------------------------
 
   const stop = () => {
     player.stop();
     setPlaying(false);
-    setTick(-1);
+    setLitNow([]);
     keepAwake(false);
   };
 
   const play = async (from = startTick) => {
     player.unlock(); // in the tap itself (Safari)
-    if (noteCount === 0) return;
+    if (noteCount === 0 || !ready) return;
     setError(null);
     setPreparing(true);
     try {
@@ -148,9 +190,19 @@ export function PieceView(props: { piece: Piece; allCategories: string[]; onBack
     if (!playing) return;
     lastSystem.current = -1;
     let frame = 0;
+    let shown = '';
     const step = () => {
       const t = player.currentTick();
-      setTick(t);
+      // re-draw only when other notes sound (not 60 times a second)
+      const now: number[] = [];
+      score.events.forEach((e, k) => {
+        if (e.pitches.length > 0 && t >= e.start && t < e.start + Math.max(e.duration, 1)) now.push(k);
+      });
+      const key = now.join(',');
+      if (key !== shown) {
+        shown = key;
+        setLitNow(now);
+      }
       follow(t);
       frame = requestAnimationFrame(step);
     };
@@ -174,12 +226,13 @@ export function PieceView(props: { piece: Piece; allCategories: string[]; onBack
   };
 
   /** Position of a box of a page inside the scrolling content (CSS pixels). */
-  const boxOnScreen = (sheet: number, b: [number, number, number, number]) => {
+  const boxOnScreen = (sheet: number, b: Box) => {
     const el = pageEls.current[sheet];
     const shown = sheets[sheet]?.shown;
     if (!el || !shown) return null;
     const scale = el.clientWidth / shown.width;
-    return { top: el.offsetTop + b[1] * scale, bottom: el.offsetTop + b[3] * scale };
+    const top = crops[sheet].top;
+    return { top: el.offsetTop + (b[1] - top) * scale, bottom: el.offsetTop + (b[3] - top) * scale };
   };
 
   // --- scroll mode ----------------------------------------------------------------------
@@ -240,7 +293,8 @@ export function PieceView(props: { piece: Piece; allCategories: string[]; onBack
     if (!el || !shown) return;
     const r = el.getBoundingClientRect();
     const x = ((e.clientX - r.left) / r.width) * shown.width;
-    const y = ((e.clientY - r.top) / r.height) * shown.height;
+    const crop = crops[sheet];
+    const y = crop.top + ((e.clientY - r.top) / r.height) * (crop.bottom - crop.top);
     // the nearest note of that page (rests too, so a piece can start with one)
     let best: PieceEvent | null = null;
     let bestDist = Infinity;
@@ -257,10 +311,7 @@ export function PieceView(props: { piece: Piece; allCategories: string[]; onBack
     const limit = (shown.result.staffSpace * 6) ** 2;
     if (!best || bestDist > limit) return;
     setStartTick(best.start);
-    if (playing) {
-      player.play(best.start);
-      setTick(best.start);
-    }
+    if (playing) player.play(best.start);
   };
 
   // --- zoom (buttons and two fingers) ---------------------------------------------------
@@ -364,11 +415,40 @@ export function PieceView(props: { piece: Piece; allCategories: string[]; onBack
 
   // --- what is lit up ---------------------------------------------------------------------
 
-  const litTick = playing ? tick : startTick;
-  const lit = useMemo(
-    () => (litTick < 0 || (!playing && startTick === 0) ? [] : score.events.filter((e) => litTick >= e.start && litTick < e.start + Math.max(e.duration, 1) && e.pitches.length > 0)),
-    [litTick, score, playing, startTick],
+  const lit: PieceEvent[] = useMemo(() => litNow.map((k) => score.events[k]).filter(Boolean), [litNow, score]);
+  /** The chosen start: the notes there are marked while the music stands. */
+  const startEvents = useMemo(
+    () => (playing || startTick === 0 ? [] : score.events.filter((e) => e.start === startTick && e.pitches.length > 0)),
+    [playing, startTick, score],
   );
+  const startMeasure = useMemo(() => {
+    const e = score.events.find((x) => x.start >= startTick);
+    return e ? measureOf(e) : 1;
+  }, [score, startTick, measureOf]);
+  /** Recognized notes and rests per page, for the frames (the vocal line too, even if not played). */
+  const notesBySheet = useMemo(
+    () => sheets.map((s) => (outline && s.shown ? s.shown.result.score.events : [])),
+    [outline, sheets],
+  );
+
+  const mark = (e: EventJ, shown: ShownSheet, cls: string, k: number | string) => {
+    const pad = shown.result.staffSpace * (cls === 'note' ? 0.15 : 0.4);
+    const w = shown.width;
+    const h = shown.height;
+    return (
+      <div key={k} class={'mark ' + cls} style={{
+        left: `${((e.box[0] - pad) / w) * 100}%`,
+        top: `${((e.box[1] - pad) / h) * 100}%`,
+        width: `${((e.box[2] - e.box[0] + 2 * pad) / w) * 100}%`,
+        height: `${((e.box[3] - e.box[1] + 2 * pad) / h) * 100}%`,
+      }} />
+    );
+  };
+
+  const setSetting = (key: string, value: boolean, set: (v: boolean) => void) => {
+    set(value);
+    void db.saveSetting(key, value);
+  };
 
   const status = working ?? (sheets.length > 0 && sheets.every((s) => s.shown || s.error)
     ? (noteCount > 0 ? `${noteCount} Noten erkannt` : 'Keine Noten erkannt')
@@ -380,6 +460,7 @@ export function PieceView(props: { piece: Piece; allCategories: string[]; onBack
         <button class="icon" aria-label="Zurück" onClick={() => { stop(); props.onBack(); }}>‹</button>
         <button class="title" onClick={() => setEditing(true)} title="Name und Rubriken">
           <span class="name">{piece.name}</span>
+          {piece.artist && <span class="muted"> – {piece.artist}</span>}
           {piece.categories.length > 0 && <span class="muted small"> · {piece.categories.join(', ')}</span>}
         </button>
         <span class="spacer" />
@@ -420,19 +501,20 @@ export function PieceView(props: { piece: Piece; allCategories: string[]; onBack
       )}
 
       <div class="pages" ref={container} onTouchStart={onTouchStart} onTouchMove={onTouchMove} onTouchEnd={onTouchEnd} onTouchCancel={onTouchEnd}>
-        <div class="pages-inner" ref={inner} style={{ width: `${zoom * 100}%`, paddingBottom: mode === 'scroll' ? '60vh' : 0 }}>
+        <div class={'pages-inner' + (cropPages ? ' cropped' : '')} ref={inner} style={{ width: `${zoom * 100}%`, paddingBottom: mode === 'scroll' ? '60vh' : 0 }}>
           {sheets.map((s, i) => (
-            <div class="page" key={s.id} ref={(el) => (pageEls.current[i] = el)} onClick={(e) => tapPage(i, e)}>
+            <div class="page" key={s.id} ref={(el) => (pageEls.current[i] = el)} onClick={(e) => tapPage(i, e)}
+              style={s.shown ? { aspectRatio: `${s.shown.width} / ${crops[i].bottom - crops[i].top}` } : undefined}>
               {s.shown ? (
-                <>
+                <div class="sheet" style={{
+                  top: `${(-crops[i].top / (crops[i].bottom - crops[i].top)) * 100}%`,
+                  height: `${(s.shown.height / (crops[i].bottom - crops[i].top)) * 100}%`,
+                }}>
                   <img src={s.shown.url} alt={`Blatt ${i + 1}`} draggable={false} />
-                  <svg viewBox={`0 0 ${s.shown.width} ${s.shown.height}`} preserveAspectRatio="none">
-                    {lit.filter((e) => e.sheet === i).map((e, k) => {
-                      const pad = s.shown!.result.staffSpace * 0.4;
-                      return <rect key={k} class="lit" x={e.box[0] - pad} y={e.box[1] - pad} width={e.box[2] - e.box[0] + 2 * pad} height={e.box[3] - e.box[1] + 2 * pad} rx={pad} />;
-                    })}
-                  </svg>
-                </>
+                  {notesBySheet[i]?.map((e, k) => mark(e, s.shown!, 'note', 'n' + k))}
+                  {startEvents.filter((e) => e.sheet === i).map((e, k) => mark(e, s.shown!, 'start', 's' + k))}
+                  {lit.filter((e) => e.sheet === i).map((e, k) => mark(e, s.shown!, 'lit', 'l' + k))}
+                </div>
               ) : (
                 <div class="placeholder">{s.error ? `Blatt ${i + 1} konnte nicht erkannt werden: ${s.error}` : `Blatt ${i + 1} wird erkannt …`}</div>
               )}
@@ -464,6 +546,16 @@ export function PieceView(props: { piece: Piece; allCategories: string[]; onBack
               <input type="checkbox" checked={includeVocals} onChange={(e) => setIncludeVocals(e.currentTarget.checked)} />
             </label>
           )}
+          <label class="row">
+            <span>Erkannte Noten umrahmen</span>
+            <span class="spacer" />
+            <input type="checkbox" checked={outline} onChange={(e) => setSetting('outline', e.currentTarget.checked, setOutline)} />
+          </label>
+          <label class="row">
+            <span>Seitenränder ausblenden (Kopf- und Fußzeilen)</span>
+            <span class="spacer" />
+            <input type="checkbox" checked={cropPages} onChange={(e) => setSetting('crop', e.currentTarget.checked, setCropPages)} />
+          </label>
           <div class="row">
             <span>Ansicht</span>
             <span class="spacer" />
@@ -481,12 +573,15 @@ export function PieceView(props: { piece: Piece; allCategories: string[]; onBack
         </div>
         {mode === 'play' ? (
           <>
-            <button class="primary big" disabled={noteCount === 0 || preparing} onClick={() => (playing ? stop() : void play())}>
-              {preparing ? '…' : playing ? '■' : '▶'}
+            <button class="primary big" disabled={noteCount === 0 || preparing || !ready} onClick={() => (playing ? stop() : void play())}>
+              {preparing || !ready ? '…' : playing ? '■' : '▶'}
             </button>
             <button onClick={() => setTempoPercent(Math.max(25, tempoPercent - 10))}>−</button>
             <span class="value" title={`♩ = ${bpm}`}>{tempoPercent} %</span>
             <button onClick={() => setTempoPercent(Math.min(200, tempoPercent + 10))}>+</button>
+            {startTick > 0
+              ? <button class="start-chip" onClick={() => setStartTick(0)} title="Wieder vom Anfang">ab Takt {startMeasure} ✕</button>
+              : <span class="muted small hint">Startstelle: Note antippen</span>}
           </>
         ) : (
           <>
@@ -505,9 +600,10 @@ export function PieceView(props: { piece: Piece; allCategories: string[]; onBack
         <PieceDialog
           piece={piece}
           allCategories={props.allCategories}
+          allArtists={props.allArtists}
           onClose={() => setEditing(false)}
-          onSave={async (name, categories) => {
-            await savePiece({ ...piece, name, categories });
+          onSave={async (name, artist, categories) => {
+            await savePiece({ ...piece, name, artist: artist || undefined, categories });
             setEditing(false);
           }}
         />

@@ -20,15 +20,27 @@ sie wie eine App, funktioniert auch offline, und Safari löscht die gespeicherte
   ist das Stück sofort da. Nach einer verbesserten Erkennung (neue Version) werden die Blätter
   beim Öffnen einmal neu erkannt.
 - **Bibliothek**: Alle Stücke werden lokal im Browser gespeichert (IndexedDB). Jedes Stück
-  kann in beliebig viele **Rubriken** einsortiert werden (z. B. „Pop“, „Klassik“, „Übung“);
-  Suche nach Name und Rubrik, Filter nach Rubrik, Sortierung nach Name oder zuletzt geöffnet.
-  Name und Rubriken über „⋯“ in der Liste oder durch Tippen auf den Namen im Stück.
+  hat einen Namen, optional einen **Interpreten** und kann in beliebig viele **Rubriken**
+  einsortiert werden (z. B. „Pop“, „Klassik“, „Übung“). Suche nach Name, Interpret und Rubrik,
+  Filter nach Rubrik und Interpret, Sortierung nach Name, Interpret oder zuletzt geöffnet.
+  Bearbeiten über „⋯“ in der Liste oder durch Tippen auf den Namen im Stück.
 - **Sicherung**: „Sicherung speichern“ legt alle Stücke (Originalbilder, Namen, Rubriken,
   Tempo) in einer ZIP-Datei ab, „Sicherung laden“ übernimmt sie wieder – auch auf einem
   anderen Gerät. Stücke, die schon da sind, bleiben unverändert.
 - **Abspielen** wie in der Android-App: Klang (Flügel, E-Piano, Orgel, Harfe), Tempo in Prozent,
   Grundtempo je Stück, Gesangsstimme zuschaltbar, klingende Noten werden markiert, die Ansicht
-  folgt der Musik. Tippen auf eine Note setzt den Startpunkt.
+  folgt der Musik. Der Klang wird gleich nach der Erkennung im Hintergrund vorbereitet, damit
+  beim Start nichts Rechenintensives mehr läuft; gestartet werden kann erst, wenn alle Blätter
+  erkannt sind.
+- **Startstelle**: Eine Note antippen – sie wird blau markiert, unten steht „ab Takt n ✕“,
+  und ▶ spielt ab dort. „✕“ setzt wieder auf den Anfang. Während des Abspielens springt
+  Antippen sofort an die Stelle.
+- **Erkannte Noten umrahmen** (unter „⚙“, standardmäßig an): zeigt, was gelesen wurde – auch
+  in der Gesangsstimme, wenn sie nicht mitgespielt wird.
+- **Seitenränder ausblenden** (unter „⚙“, standardmäßig an): Kopf- und Fußzeilen, Seitenzahlen
+  und leere Ränder zwischen den Seiten werden weggelassen (nur der Bereich der Notenzeilen mit
+  etwas Platz darüber und darunter); die erste Seite behält ihren Titel. So laufen die Seiten
+  beim Scrollen ohne Unterbrechung ineinander.
 - **Scrollmodus** zum eigenen Spielen: Die Noten laufen gleichmäßig nach oben, ohne Ton. Die
   Geschwindigkeit wird als Tempo (♩ = …) eingestellt: Bei dem eingestellten Tempo ist das
   Stück zu Ende gescrollt, wenn es zu Ende gespielt wäre (berechnet aus den erkannten Noten).

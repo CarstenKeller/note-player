@@ -5,11 +5,13 @@ import type { Piece } from '../db';
 export function PieceDialog(props: {
   piece: Piece;
   allCategories: string[];
-  onSave: (name: string, categories: string[]) => void;
+  allArtists: string[];
+  onSave: (name: string, artist: string, categories: string[]) => void;
   onDelete?: () => void;
   onClose: () => void;
 }) {
   const [name, setName] = useState(props.piece.name);
+  const [artist, setArtist] = useState(props.piece.artist ?? '');
   const [chosen, setChosen] = useState<string[]>(props.piece.categories);
   const [known, setKnown] = useState<string[]>(() => [...new Set([...props.allCategories, ...props.piece.categories])].sort(collator.compare));
   const [fresh, setFresh] = useState('');
@@ -31,6 +33,13 @@ export function PieceDialog(props: {
         <label class="field">
           Name
           <input value={name} onInput={(e) => setName(e.currentTarget.value)} />
+        </label>
+        <label class="field">
+          Interpret
+          <input value={artist} list="artists" placeholder="z. B. Queen, Falco, Mozart" onInput={(e) => setArtist(e.currentTarget.value)} />
+          <datalist id="artists">
+            {props.allArtists.map((a) => <option key={a} value={a} />)}
+          </datalist>
         </label>
         <div class="field">
           Rubriken
@@ -55,7 +64,7 @@ export function PieceDialog(props: {
           <button class="primary" onClick={() => {
             // a typed but not yet added section counts too
             const c = fresh.trim();
-            props.onSave(name.trim() || props.piece.name, c && !chosen.includes(c) ? [...chosen, c] : chosen);
+            props.onSave(name.trim() || props.piece.name, artist.trim(), c && !chosen.includes(c) ? [...chosen, c] : chosen);
           }}>Speichern</button>
         </div>
       </div>

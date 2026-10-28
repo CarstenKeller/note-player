@@ -9,10 +9,15 @@ import './styles.css';
 function App() {
   const [open, setOpen] = useState<Piece | null>(null);
   const [categories, setCategories] = useState<string[]>([]);
+  const [artists, setArtists] = useState<string[]>([]);
   const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
-  const refreshCategories = async () => setCategories([...new Set((await db.pieces()).flatMap((p) => p.categories))]);
+  const refreshCategories = async () => {
+    const all = await db.pieces();
+    setCategories([...new Set(all.flatMap((p) => p.categories))]);
+    setArtists([...new Set(all.map((p) => p.artist ?? '').filter(Boolean))]);
+  };
   useEffect(() => void refreshCategories(), [open]);
 
   const importNew = async (files: File[]) => {
@@ -33,7 +38,7 @@ function App() {
   return (
     <>
       {open
-        ? <PieceView key={open.id} piece={open} allCategories={categories} onBack={() => setOpen(null)} />
+        ? <PieceView key={open.id} piece={open} allCategories={categories} allArtists={artists} onBack={() => setOpen(null)} />
         : <Library onOpen={setOpen} onImport={importNew} />}
       {busy && <div class="overlay"><div class="dialog">{busy}</div></div>}
       {error && (

@@ -13,6 +13,9 @@ const pending = new Map<number, (r: Response) => void>();
 
 type Payload<T> = T extends unknown ? Omit<T, 'id'> : never;
 
+/** The piano recordings, sent again to a new worker. */
+let samples: { pitches: number[]; data: Float32Array[]; rate: number } | null = null;
+
 function call(req: Payload<Request>, transfer: Transferable[] = []): Promise<Extract<Response, { ok: true }>> {
   if (!worker) {
     worker = new Worker(new URL('./worker.ts', import.meta.url), { type: 'module' });
@@ -20,6 +23,7 @@ function call(req: Payload<Request>, transfer: Transferable[] = []): Promise<Ext
       pending.get(e.data.id)?.(e.data);
       pending.delete(e.data.id);
     };
+    if (samples && req.type !== 'samples') worker.postMessage({ type: 'samples', id: nextId++, ...samples });
   }
   const id = nextId++;
   return new Promise((resolve, reject) => {
@@ -52,7 +56,21 @@ export async function recognizeSheet(sheetId: string): Promise<ShownSheet> {
   return toShown(rec);
 }
 
-export const sendSamples = (pitches: number[], data: Float32Array[], rate: number) => call({ type: 'samples', pitches, data, rate });
+export function sendSamples(pitches: number[], data: Float32Array[], rate: number) {
+  samples = { pitches, data, rate };
+  return call({ type: 'samples', pitches, data, rate });
+}
+
+/**
+ * Ends the worker when it has nothing to do. The recognition of a large photo leaves a lot of
+ * memory behind; on the iPad that can disturb the playback. A new worker starts when needed.
+ */
+export function releaseWorker(): void {
+  if (worker && pending.size === 0) {
+    worker.terminate();
+    worker = null;
+  }
+}
 
 export async function render(events: Int32Array, bassStaves: number[], tpq: number, bpm: number, instrument: string) {
   const r = await call({ type: 'render', events, bassStaves, tpq, bpm, instrument });

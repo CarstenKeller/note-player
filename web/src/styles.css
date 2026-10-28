@@ -72,7 +72,8 @@ input[type='checkbox'] { width: 24px; height: 24px; }
 
 /* --- library --- */
 .library { display: flex; flex-direction: column; height: 100%; }
-.search { display: flex; gap: 8px; padding: 12px; }
+.search { display: flex; gap: 8px; padding: 12px; flex-wrap: wrap; }
+.search input { flex: 1 1 260px; width: auto; }
 .segmented { display: flex; }
 .segmented button { white-space: nowrap; }
 .segmented button { border-radius: 0; }
@@ -153,10 +154,17 @@ input[type='checkbox'] { width: 24px; height: 24px; }
   background: #8a8f94;
 }
 .pages-inner { min-width: 100%; }
-.page { position: relative; background: #fff; margin-bottom: 8px; user-select: none; -webkit-user-select: none; }
-.page img { display: block; width: 100%; height: auto; -webkit-touch-callout: none; }
-.page svg { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; }
-.page .lit { fill: var(--highlight); }
+.page { position: relative; background: #fff; margin-bottom: 8px; overflow: hidden; user-select: none; -webkit-user-select: none; }
+/* without margins the pages follow each other closely, like one long sheet */
+.cropped .page { margin-bottom: 0; border-bottom: 2px solid #e4e0d8; }
+.page .sheet { position: absolute; left: 0; width: 100%; }
+.page img { display: block; width: 100%; height: 100%; -webkit-touch-callout: none; }
+.mark { position: absolute; pointer-events: none; border-radius: 4px; }
+.mark.note { border: 1.5px solid rgba(31, 120, 200, 0.55); }
+.mark.start { background: rgba(31, 120, 200, 0.3); border: 2px solid rgba(31, 120, 200, 0.9); }
+.mark.lit { background: var(--highlight); }
+.start-chip { background: #e3eef9; border-color: rgba(31, 120, 200, 0.6); }
+.hint { white-space: nowrap; }
 .placeholder { padding: 48px 24px; color: var(--muted); text-align: center; }
 
 .panel {
@@ -211,3 +219,5 @@ input[type='checkbox'] { width: 24px; height: 24px; }
   .bar h1 { font-size: 18px; }
   .piece .title { max-width: 40%; }
 }
+.pieces .artist { font-weight: 400; color: var(--muted); }
+.search select { flex: 0 1 220px; }
