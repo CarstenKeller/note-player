@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'preact/hooks';
 import { db, persist, type Piece } from '../db';
 import { BackupStatus } from './BackupStatus';
 import { IconButton } from './Icon';
+import { TextDialog } from './TextDialog';
 import { PieceDialog, collator } from './PieceDialog';
 
 const NONE = '\u0000ohne';
@@ -11,6 +12,7 @@ type Sort = 'name' | 'artist' | 'recent';
 export function Library(props: {
   onOpen: (piece: Piece) => void;
   onImport: (files: File[]) => void;
+  onText: (text: string, name: string) => void;
 }) {
   const [pieces, setPieces] = useState<Piece[]>([]);
   const [query, setQuery] = useState('');
@@ -20,6 +22,7 @@ export function Library(props: {
   const [editing, setEditing] = useState<Piece | null>(null);
   const [persisted, setPersisted] = useState<boolean | null>(null);
   const camera = useRef<HTMLInputElement>(null);
+  const [pasting, setPasting] = useState(false);
   const files = useRef<HTMLInputElement>(null);
 
   const reload = async () => setPieces(await db.pieces());
@@ -71,6 +74,7 @@ export function Library(props: {
         <span class="spacer" />
         <IconButton class="primary" icon="camera" label="Foto" onClick={() => camera.current?.click()} />
         <IconButton class="primary" icon="open" label="Bilder / PDF" onClick={() => files.current?.click()} />
+        <IconButton class="primary" icon="text" label="Text" onClick={() => setPasting(true)} />
         <input ref={camera} type="file" accept="image/*" capture="environment" hidden onChange={(e) => picked(e.currentTarget)} />
         <input ref={files} type="file" accept="image/*,application/pdf,.pdf" multiple hidden onChange={(e) => picked(e.currentTarget)} />
       </header>
@@ -135,6 +139,7 @@ export function Library(props: {
         </span>
       </footer>
 
+      {pasting && <TextDialog withName onClose={() => setPasting(false)} onDone={(text, name) => { setPasting(false); props.onText(text, name); }} />}
       {editing && (
         <PieceDialog
           piece={editing}

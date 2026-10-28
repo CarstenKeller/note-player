@@ -1,7 +1,7 @@
 import { render } from 'preact';
 import { useEffect, useState } from 'preact/hooks';
 import { db, newId, type Piece } from './db';
-import { importFiles, nameFor } from './importer';
+import { importFiles, nameFor, textSheet } from './importer';
 import { initBackup } from './autobackup';
 import { Library } from './ui/Library';
 import { PieceView } from './ui/PieceView';
@@ -36,11 +36,25 @@ function App() {
     }
   };
 
+  /** A new piece from pasted text (tabs, chords over lyrics): opened in the guitar mode. */
+  const importText = async (text: string, name: string) => {
+    setError(null);
+    try {
+      const pieceName = name || text.split(/\r?\n/).find((l) => l.trim())?.trim().slice(0, 40) || 'Text';
+      const sheet = await textSheet(text, pieceName);
+      const piece: Piece = { id: newId(), name: pieceName, created: Date.now(), opened: Date.now(), categories: [], sheets: [sheet], instrument: 'guitar' };
+      await db.savePiece(piece);
+      setOpen(piece);
+    } catch (e) {
+      setError((e as Error).message);
+    }
+  };
+
   return (
     <>
       {open
         ? <PieceView key={open.id} piece={open} allCategories={categories} allArtists={artists} onBack={() => setOpen(null)} />
-        : <Library onOpen={setOpen} onImport={importNew} />}
+        : <Library onOpen={setOpen} onImport={importNew} onText={(t, n) => void importText(t, n)} />}
       {busy && <div class="overlay"><div class="dialog">{busy}</div></div>}
       {error && (
         <div class="overlay" onClick={() => setError(null)}>

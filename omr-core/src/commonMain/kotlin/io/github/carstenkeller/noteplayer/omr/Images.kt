@@ -28,6 +28,18 @@ class GrayImage(val width: Int, val height: Int, val pixels: IntArray = IntArray
         return (top * (1 - ay) + bottom * ay).toInt()
     }
 
+    /** A copy with the given areas (left, top, right, bottom) painted white. */
+    fun whitened(areas: List<Box>): GrayImage {
+        if (areas.isEmpty()) return this
+        val out = pixels.copyOf()
+        for (a in areas) {
+            val x0 = max(0, a.left.toInt())
+            val x1 = min(width - 1, a.right.toInt())
+            for (y in max(0, a.top.toInt())..min(height - 1, a.bottom.toInt())) out.fill(255, y * width + x0, y * width + x1 + 1)
+        }
+        return GrayImage(width, height, out)
+    }
+
     /** Area-averaging downscale so that the longer side is at most [maxSide]. */
     fun downscaled(maxSide: Int): GrayImage {
         val longSide = max(width, height)

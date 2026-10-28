@@ -407,7 +407,8 @@ private fun Controls(
             Box {
                 TextButton(onClick = { menu = true }) { Text("${playback.instrument.label} ▾", maxLines = 1) }
                 DropdownMenu(expanded = menu, onDismissRequest = { menu = false }) {
-                    for (i in Instrument.entries) {
+                    // the guitar has no samples in the Android app (only in the web app)
+                    for (i in Instrument.entries.filter { it != Instrument.GUITAR }) {
                         DropdownMenuItem(
                             text = { Text(if (i == playback.instrument) "✓ ${i.label}" else i.label) },
                             onClick = { menu = false; onInstrument(i) },

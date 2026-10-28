@@ -6,16 +6,21 @@
   "scripts": {
     "dev": "vite",
     "build": "tsc --noEmit && vite build",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "postinstall": "node scripts/copy-ocr.mjs",
+    "test": "vitest run"
   },
   "dependencies": {
+    "@tesseract.js-data/eng": "1.0.0",
     "fflate": "0.8.2",
     "pdfjs-dist": "4.10.38",
-    "preact": "10.25.4"
+    "preact": "10.25.4",
+    "tesseract.js": "7.0.0"
   },
   "devDependencies": {
     "@preact/preset-vite": "2.9.4",
     "typescript": "5.7.3",
-    "vite": "5.4.11"
+    "vite": "5.4.11",
+    "vitest": "2.1.8"
   }
 }

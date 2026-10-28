@@ -57,7 +57,7 @@ object Omr {
         for (other in pages.drop(1)) if (other.staffLength > 1.15 * page.staffLength + 1) page = other
         val gray = page.gray
         val skew = page.skew
-        val m = page.metrics ?: return empty(gray, 0.0, 0.0, "Auf dem Bild wurden keine Notenlinien gefunden.")
+        val m = page.metrics ?: return empty(page.display, 0.0, 0.0, "Auf dem Bild wurden keine Notenlinien gefunden.", page.tabs)
         val bin = if (page === pages[0]) page.bin else Binarizer.sauvola(gray, max(31, (m.interline * 5).toInt()), k = SAUVOLA_K)
         val d = m.interline
         if (d < 7) warnings += "Die Notenlinien sind sehr klein abgebildet – ein näheres Foto verbessert die Erkennung."
@@ -75,7 +75,7 @@ object Omr {
             }
         }
         staves.sortBy { it.top((it.left + it.right) / 2.0) }
-        if (staves.isEmpty()) return empty(gray, d, skew, "Auf dem Bild wurden keine Notenlinien gefunden.")
+        if (staves.isEmpty()) return empty(page.display, d, skew, "Auf dem Bild wurden keine Notenlinien gefunden.", page.tabs)
 
         val systemOf = groupSystems(bin, staves, d)
 
@@ -414,7 +414,7 @@ object Omr {
         val score = Score(Score.TPQ, events, staffInfos, systems)
         val instrumental = Score(Score.TPQ, instrEvents, staffInfos, instrSystems)
         if (score.noteCount == 0) warnings += "Es wurden Notenlinien, aber keine Noten erkannt."
-        return RecognitionResult(gray, score, instrumental, d, skew, warnings)
+        return RecognitionResult(page.display, score, instrumental, d, skew, warnings, page.tabs)
     }
 
     /** Pairs (x in this staff, x in the reference staff): staff starts, matching barlines, staff ends. */
@@ -477,7 +477,20 @@ object Omr {
     }
 
     /** The page straightened and binarized with threshold parameter [k], and the staves found on it. */
-    private class Page(val k: Double, val gray: GrayImage, val bin: BinaryImage, val skew: Double, val metrics: StaffMetrics?, val staves: List<Staff>) {
+    /**
+     * [gray] is the page without the tablature staves (it is read); [display] the whole page as
+     * it is shown.
+     */
+    private class Page(
+        val k: Double,
+        val gray: GrayImage,
+        val bin: BinaryImage,
+        val skew: Double,
+        val metrics: StaffMetrics?,
+        val staves: List<Staff>,
+        val display: GrayImage = gray,
+        val tabs: List<Box> = emptyList(),
+    ) {
         val staffLength: Double get() = staves.sumOf { (it.right - it.left).toDouble() }
     }
 
@@ -487,9 +500,17 @@ object Omr {
         val m0 = StaffDetector.metrics(bin0) ?: return Page(k, gray, bin0, 0.0, null, emptyList())
         val skew = StaffDetector.estimateSkew(bin0, m0.interline, m0.lineThickness)
         if (abs(skew) >= 0.1) gray = gray.rotated(-skew)
-        val bin = Binarizer.sauvola(gray, max(31, (m0.interline * 5).toInt()), k = k)
+        val window = max(31, (m0.interline * 5).toInt())
+        val full = Binarizer.sauvola(gray, window, k = k)
+        // tablature staves are taken out before the note staves are measured and looked for
+        val tabs = StaffDetector.detectTabs(full).map {
+            val s = it.spacing
+            Box((it.left - s).toFloat(), (it.top - 0.7 * s).toFloat(), (it.right + s).toFloat(), (it.bottom + 0.7 * s).toFloat())
+        }
+        val music = gray.whitened(tabs)
+        val bin = if (tabs.isEmpty()) full else Binarizer.sauvola(music, window, k = k)
         val m = StaffDetector.metrics(bin) ?: m0
-        return Page(k, gray, bin, skew, m, StaffDetector.detect(bin, m).filter { linesShow(gray, it) })
+        return Page(k, music, bin, skew, m, StaffDetector.detect(bin, m).filter { linesShow(music, it) }, gray, tabs)
     }
 
     /**
@@ -515,8 +536,8 @@ object Omr {
         return space > 110 && space - line >= 10
     }
 
-    private fun empty(gray: GrayImage, d: Double, skew: Double, msg: String) =
-        Score(Score.TPQ, emptyList(), emptyList(), emptyList()).let { RecognitionResult(gray, it, it, d, skew, listOf(msg)) }
+    private fun empty(gray: GrayImage, d: Double, skew: Double, msg: String, tabs: List<Box> = emptyList()) =
+        Score(Score.TPQ, emptyList(), emptyList(), emptyList()).let { RecognitionResult(gray, it, it, d, skew, listOf(msg), tabs) }
 
     // ------------------------------------------------------------------------------------
 
@@ -1124,14 +1145,33 @@ object Omr {
         }
         var sharps = 0
         var flats = 0
+        // the signs of a key signature step up and down (F C G D ... or B E A D ...): two signs of
+        // the same size side by side at the same height are something else, e.g. a "C" time
+        // signature that the line removal cut in two
+        val signs = ArrayList<Component>()
+        var keyCursor = cursor
+        // the cursor before the first sign (if the signs turn out to be no key signature)
+        var beforeSigns = cursor
         for (c in own.filter { it.x0 >= cursor - 1 }) {
-            if (c.x0 >= cursor + 2.2 * d) break
-            if (max(c.width, c.height) < 0.6 * d) { cursor = max(cursor, c.x1.toDouble()); continue } // specks, clef dots
+            if (c.x0 >= keyCursor + 2.2 * d) break
+            if (max(c.width, c.height) < 0.6 * d) { keyCursor = max(keyCursor, c.x1.toDouble()); continue } // specks, clef dots
             if (!accidentalLike(c, d) || holdsNote(c)) break
+            val prev = signs.lastOrNull()
+            if (prev != null && abs(c.cy - prev.cy) < 0.35 * d && min(c.height, prev.height) >= 0.7 * max(c.height, prev.height)) {
+                // both belong to that other symbol
+                signs.removeAt(signs.size - 1)
+                keyCursor = signs.lastOrNull()?.x1?.toDouble() ?: beforeSigns
+                break
+            }
+            if (signs.isEmpty()) beforeSigns = keyCursor
+            signs += c
+            keyCursor = c.x1.toDouble()
+        }
+        for (c in signs) {
             if (classifyAccidental(img, c) < 0) flats++ else sharps++
-            cursor = c.x1.toDouble()
             used[c.id] = true
         }
+        cursor = max(cursor, keyCursor)
         val count = min(7, sharps + flats)
         val key = if (flats > sharps) -count else count
 
@@ -1144,8 +1184,18 @@ object Omr {
         val hasUpper = digits.any { it.cy < mid }
         val hasLower = digits.any { it.cy > mid }
         val common = digits.size == 1 && digits[0].width >= 1.1 * d && digits[0].height >= 1.7 * d && abs(digits[0].cy - mid) < 0.5 * d
+        // a "C" that the line removal cut into its left and right half
+        val halfLike = own.filter {
+            !holdsNote(it) && it.x0 >= cursor - 1 && it.x0 < cursor + 3.0 * d &&
+                it.height >= 1.5 * d && it.height <= 2.7 * d && it.width <= 1.2 * d && abs(it.cy - mid) < 0.5 * d
+        }.sortedBy { it.x0 }
+        val halves = halfLike.firstOrNull()?.takeIf { it.x0 < cursor + 2.0 * d }
+            ?.let { first -> halfLike.filter { it.x0 <= first.x1 + 1.2 * d } } ?: emptyList()
+        val brokenC = halves.size == 2 && (halves.maxOf { it.x1 } - halves.minOf { it.x0 }).toDouble() in (1.0 * d)..(2.4 * d)
         if ((hasUpper && hasLower) || common) {
             for (c in digits) { cursor = max(cursor, c.x1.toDouble()); used[c.id] = true }
+        } else if (brokenC) {
+            for (c in halves) { cursor = max(cursor, c.x1.toDouble()); used[c.id] = true }
         } else {
             // both digits merged into one glyph
             val stacked = own.firstOrNull {

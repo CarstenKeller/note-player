@@ -48,7 +48,89 @@ class Staff(private val ys: Array<DoubleArray>, private val step: Int) {
     }
 }
 
+/** A guitar tablature staff: six equally spaced lines (string 1, the high e, on top). */
+data class TabStaff(val left: Int, val right: Int, val lineYs: List<Double>) {
+    val top get() = lineYs.first()
+    val bottom get() = lineYs.last()
+    val spacing get() = (bottom - top) / 5
+    fun box() = Box(left.toFloat(), top.toFloat(), right.toFloat(), bottom.toFloat())
+}
+
 object StaffDetector {
+
+    /**
+     * Guitar tablature staves: groups of exactly six long, equally spaced horizontal lines (a
+     * staff for notes has five). They are looked for before anything else, because their
+     * line spacing usually differs from the one of the note staves and their numbers would be
+     * read as notes.
+     */
+    fun detectTabs(bin: BinaryImage): List<TabStaff> {
+        val w = bin.width
+        val h = bin.height
+        val minRun = max(20, w / 40)
+        val profile = IntArray(h)
+        val x0 = IntArray(h) { w }
+        val x1 = IntArray(h) { -1 }
+        for (y in 0 until h) {
+            var x = 0
+            val row = y * w
+            while (x < w) {
+                if (!bin.data[row + x]) { x++; continue }
+                val start = x
+                while (x < w && bin.data[row + x]) x++
+                if (x - start >= minRun) {
+                    profile[y] += x - start
+                    x0[y] = min(x0[y], start)
+                    x1[y] = max(x1[y], x - 1)
+                }
+            }
+        }
+        val maxP = profile.maxOrNull() ?: return emptyList()
+        if (maxP < w / 4) return emptyList()
+        // lines that run through a good part of the page
+        val thr = max(w * 0.25, maxP * 0.35)
+        class Line(val y: Double, val left: Int, val right: Int)
+        val lines = ArrayList<Line>()
+        var y = 0
+        while (y < h) {
+            if (profile[y] < thr) { y++; continue }
+            var sum = 0.0
+            var wsum = 0.0
+            var l = w
+            var r = -1
+            while (y < h && profile[y] >= thr) {
+                sum += y * profile[y].toDouble(); wsum += profile[y]
+                l = min(l, x0[y]); r = max(r, x1[y])
+                y++
+            }
+            lines += Line(sum / wsum, l, r)
+        }
+        fun overlap(a: Line, b: Line) = min(a.right, b.right) - max(a.left, b.left) >= 0.7 * min(a.right - a.left, b.right - b.left)
+        val tabs = ArrayList<TabStaff>()
+        var i = 0
+        while (i < lines.size) {
+            var j = i
+            while (j + 1 < lines.size) {
+                val g = lines[j + 1].y - lines[j].y
+                if (g < 4 || g > 0.08 * h || !overlap(lines[i], lines[j + 1])) break
+                if (j > i) {
+                    val g0 = (lines[j].y - lines[i].y) / (j - i)
+                    if (abs(g - g0) > 0.15 * g0) break
+                }
+                j++
+            }
+            val group = lines.subList(i, j + 1)
+            // the six lines of a tablature are equally long (a beam or a line next to a staff of
+            // five is shorter)
+            val longest = group.maxOf { it.right - it.left }
+            if (group.size == 6 && group.all { it.right - it.left >= 0.85 * longest }) {
+                tabs += TabStaff(group.maxOf { it.left }, group.minOf { it.right }, group.map { it.y })
+            }
+            i = j + 1
+        }
+        return tabs
+    }
+
 
     fun metrics(bin: BinaryImage): StaffMetrics? {
         val black = IntArray(64)

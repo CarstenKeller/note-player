@@ -265,3 +265,15 @@ input[type='checkbox'] { width: 24px; height: 24px; }
   .controls .ib:not(.keep):not(.start-chip) { width: 40px; }
   .controls .value { min-width: 42px; font-size: 15px; }
 }
+
+/* --- pasting text --- */
+.paste {
+  width: 100%;
+  min-height: 40vh;
+  font: 15px/1.4 Menlo, 'Courier New', monospace;
+  padding: 10px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  white-space: pre;
+  overflow: auto;
+}

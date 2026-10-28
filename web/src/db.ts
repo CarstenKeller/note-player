@@ -1,5 +1,8 @@
 // Local storage of the pieces in the browser (IndexedDB). Nothing leaves the device.
 
+import type { TextPiece } from './guitar/text';
+import type { StrumPattern } from './guitar/analyze';
+
 /** A saved piece: its sheets in playing order and the sections ("Rubriken") it is filed under. */
 export interface Piece {
   id: string;
@@ -16,7 +19,22 @@ export interface Piece {
   bpm?: number;
   /** Speed of the scroll mode, as quarter notes per minute. */
   scrollBpm?: number;
+  /** Piano (default): notes as before. Guitar: also chord names and tabs, guitar sound. */
+  instrument?: 'piano' | 'guitar';
+  guitar?: GuitarSettings;
 }
+
+export interface GuitarSettings {
+  /** Strum the chords (names above notes or lyrics). */
+  chords: boolean;
+  /** Play the notes and tabs. */
+  melody: boolean;
+  strum: StrumPattern;
+  /** Beats a chord lasts on a song sheet without notes. */
+  beatsPerChord: number;
+}
+
+export const DEFAULT_GUITAR: GuitarSettings = { chords: true, melody: true, strum: 'quarter', beatsPerChord: 4 };
 
 /** One sheet: a photo, a picture or a page of a PDF, as it was imported. */
 export interface Sheet {
@@ -24,6 +42,13 @@ export interface Sheet {
   blob: Blob;
   /** File name it came from (for saving it again). */
   name: string;
+  /** 'text': pasted text (tabs, chords over lyrics), drawn as a picture. */
+  kind?: 'image' | 'pdf' | 'text';
+  /** Size of the picture (for placing [text] on the recognized page). */
+  w?: number;
+  h?: number;
+  /** Text on the sheet with positions in the picture (PDF text layer or pasted text). */
+  text?: TextPiece[];
 }
 
 /** The recognition of a sheet, kept so that a piece opens quickly the next time. */
@@ -37,6 +62,8 @@ export interface Recognized {
   /** The straightened page as it is shown. */
   page: Blob;
   json: string;
+  /** Text recognized on the page (for chord names), once it was needed. */
+  ocr?: TextPiece[];
 }
 
 const DB_NAME = 'notenspieler';
@@ -97,7 +124,7 @@ function significantChange(): void {
   for (const l of changeListeners) l();
 }
 
-const essentials = (p: Piece) => JSON.stringify([p.name, p.artist ?? '', p.categories, p.sheets]);
+const essentials = (p: Piece) => JSON.stringify([p.name, p.artist ?? '', p.categories, p.sheets, p.instrument ?? 'piano']);
 
 export function newId(): string {
   return Date.now().toString(36) + Math.random().toString(36).slice(2, 8);

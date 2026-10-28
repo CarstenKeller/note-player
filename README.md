@@ -60,6 +60,37 @@ sie wie eine App, funktioniert auch offline, und Safari löscht die gespeicherte
   Original speichern.
 - **Zoom** mit zwei Fingern oder unter „⚙“ → „Ansicht“.
 
+### Gitarren-Modus (Web-App)
+
+Unter „⚙“ → „Instrument“ wird ein Stück auf **Gitarre** umgestellt (je Stück gespeichert; neue
+Stücke aus eingefügtem Text sind gleich im Gitarren-Modus). Mit „Klavier“ bleibt alles wie
+gehabt. Im Gitarren-Modus:
+
+- **Klang**: aufgenommene Akustikgitarre. Akkorde werden angeschlagen (Saiten leicht versetzt);
+  „Anschlag“: einmal je Akkord, jede Viertel abwärts oder Achtel ab und auf. „Akkorde
+  anschlagen“ und „Noten und Tabs spielen“ lassen sich einzeln abschalten.
+- **Noten + TAB** (Gitarrenbuch): Tabulatur-Zeilen (sechs Linien) werden erkannt und nicht als
+  Noten gelesen; gespielt wird die Notenzeile darüber, eine Oktave tiefer als notiert (wie bei
+  Gitarrennoten üblich). Die Bundzahlen der Tabulatur werden nicht gelesen.
+- **Akkordnamen** über Noten oder Liedtext (C, Am, G7, C#m7, D/F#, Esus4, E(2), Bbmaj7 …):
+  - aus PDFs mit Textebene direkt (fehlerfrei, wenn das PDF Text enthält),
+  - aus Fotos und Scans mit Texterkennung (tesseract.js, läuft auf dem Gerät; beim ersten Mal
+    werden einige MB nachgeladen, danach offline). Bei Blättern mit Notenzeilen wird nur der
+    Streifen über jeder Zeile gelesen. Bei Fotos werden nicht immer alle Akkorde gefunden.
+  - Über Noten gilt ein Akkord ab der Note unter ihm, bis zum nächsten Akkord.
+  - Auf Liedblättern ohne Noten gilt eine Zeile als Akkordzeile, wenn darin nur Akkorde stehen;
+    jeder Akkord dauert „Schläge je Akkord“ (Standard 4). Kleine Buchstaben („a“, „d“) werden
+    wie in deutschen Liederbüchern als Moll gelesen; ein kleines „c“ als C.
+  - Gegriffen wird die übliche offene Form (C, G, Am, D7 …), sonst eine Form auf den ersten Bünden.
+- **Text-Tabs** (ASCII, z. B. „e|---0---3---|“) aus PDFs oder über **„Text“** (Bibliothek) bzw.
+  „Text anhängen“ (Blätter) eingefügt: je sechs Zeilen werden gelesen (hohe e-Saite oben). Da
+  Text-Tabs meist keinen Rhythmus haben, gilt der häufigste Abstand zwischen zwei Tönen als
+  Achtel. Bass-Tabs (vier Zeilen) werden nicht gelesen.
+- Nicht unterstützt: Griffbilder (Kästchen mit Punkten) werden nicht ausgewertet, nur der
+  Akkordname darüber; Tabulatur ohne Noten im Notensatz (nur TAB-Linien mit Bundzahlen);
+  Rhythmus-Zeichen in Tabs; Schlagmuster, Wiederholungen. In der Android-App gibt es den
+  Gitarren-Modus nicht.
+
 Noch nicht in der Web-App (nur Android): Videos mit scrollenden Noten, Umrahmen aller
 erkannten Noten, Cursor in der Zeile.
 
@@ -183,7 +214,7 @@ Tipps:
 |---|---|
 | `omr-core` | Kotlin Multiplatform (JVM und JavaScript) ohne Android-Abhängigkeiten: Binarisierung (Sauvola), Schräglagenkorrektur, Notenlinienerkennung und -entfernung, Symbolerkennung, Haltebögen, Triolen, Zeitberechnung, Zusammensetzen von Videobildern (`VideoStitcher`), MIDI-Export, Klangerzeugung (`audio/Renderer`). `jsMain/WebApi.kt` ist die Schnittstelle für die Web-App. Unit-Tests in `jvmTest`. |
 | `app` | Android-App (Jetpack Compose): Kamera/Galerie/Video (`MediaCodec`), Anzeige mit Markierung, Dekodieren der Klavier-Samples und Wiedergabe über `MediaPlayer`. |
-| `web` | Web-App (TypeScript, Preact, Vite): Bibliothek mit Rubriken in IndexedDB, PDF-Import (pdf.js), Erkennung und Klangerzeugung in einem Web Worker (Kotlin-Kern als JavaScript), Wiedergabe mit Web Audio, Scrollmodus, Offline-Betrieb (Service Worker). |
+| `web` | Web-App (TypeScript, Preact, Vite): Bibliothek mit Rubriken in IndexedDB, PDF-Import (pdf.js), Erkennung und Klangerzeugung in einem Web Worker (Kotlin-Kern als JavaScript), Wiedergabe mit Web Audio, Scrollmodus, Offline-Betrieb (Service Worker), Gitarren-Modus (`src/guitar`: Akkordnamen, Text-Tabs, Texterkennung). Tests: `npm test`. |
 
 Ablauf der Erkennung (`Omr.recognize`):
 
@@ -236,4 +267,10 @@ bezogen über das npm-Paket `@audio-samples/piano-velocity8`. Sie wurden ausgew�
 neu kodiert; Details in `app/src/main/assets/piano/QUELLE.txt` (für die Web-App als MP3 in
 `web/public/piano`).
 
-Die Web-App verwendet pdf.js (Apache 2.0), Preact (MIT) und fflate (MIT).
+Die Gitarren-Samples in `web/public/guitar` stammen aus **tonejs-instruments** von Nicholaus
+Brosowsky (Akustikgitarre), Lizenz **CC BY 3.0**, bezogen über das npm-Paket
+`tonejs-instrument-guitar-acoustic-mp3`; gekürzt und neu kodiert, Details in
+`web/public/guitar/QUELLE.txt`.
+
+Die Web-App verwendet pdf.js (Apache 2.0), Preact (MIT), fflate (MIT) und tesseract.js mit den
+englischen Sprachdaten (Apache 2.0).

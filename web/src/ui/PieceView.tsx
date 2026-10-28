@@ -1,13 +1,16 @@
 import { useEffect, useMemo, useRef, useState } from 'preact/hooks';
-import { db, type Piece } from '../db';
-import { recognizeSheet, releaseWorker, type ShownSheet } from '../engine';
-import { importFiles } from '../importer';
-import { INSTRUMENTS, Player } from '../audio';
-import { joinSheets, secondsOf, type Box, type EventJ, type PieceEvent, type PieceScore } from '../score';
+import { db, DEFAULT_GUITAR, type GuitarSettings, type Piece } from '../db';
+import { recognizeSheet, releaseWorker, sheetText, type ShownSheet } from '../engine';
+import { importFiles, textSheet } from '../importer';
+import { GUITAR, INSTRUMENTS, Player } from '../audio';
+import { joinSheets, secondsOf, type Box, type EventJ, type ExtraEvent, type PieceEvent, type PieceScore, type SheetPart } from '../score';
+import { analyzeSheet, strums, type GuitarSheet, type StrumPattern } from '../guitar/analyze';
+import { linesFromPieces, type TextLine } from '../guitar/text';
 import { keepAwake } from '../wakelock';
 import { download } from '../backup';
 import { PieceDialog } from './PieceDialog';
 import { BackupStatus } from './BackupStatus';
+import { TextDialog } from './TextDialog';
 import { Icon, IconButton } from './Icon';
 
 /** Without a setting, 100 % means 120 quarter notes per minute (tempo marks are not read). */
@@ -31,6 +34,9 @@ export function PieceView(props: { piece: Piece; allCategories: string[]; allArt
   const [piece, setPiece] = useState(props.piece);
   const [sheets, setSheets] = useState<SheetState[]>(props.piece.sheets.map((id) => ({ id })));
   const [working, setWorking] = useState<string | null>(null);
+  /** Guitar: the text on each sheet (chord names, text tabs) by sheet id; absent = not read yet. */
+  const [texts, setTexts] = useState<Record<string, TextLine[]>>({});
+  const [reading, setReading] = useState<string | null>(null);
   const [mode, setMode] = useState<Mode>('play');
 
   const [playing, setPlaying] = useState(false);
@@ -105,46 +111,101 @@ export function PieceView(props: { piece: Piece; allCategories: string[]; allArt
     };
   }, [sheets]);
 
-  const score: PieceScore = useMemo(
-    () => joinSheets(sheets.map((s) => (s.shown ? (includeVocals ? s.shown.result.score : s.shown.result.withoutVocals) : null))),
-    [sheets, includeVocals],
-  );
+  const guitar = piece.instrument === 'guitar';
+  const gs: GuitarSettings = { ...DEFAULT_GUITAR, ...piece.guitar };
+  const saveGuitar = (change: Partial<GuitarSettings>) => savePiece({ ...piece, guitar: { ...gs, ...change } });
+  /** The sound that is rendered. */
+  const sound = guitar ? GUITAR : instrument;
+
+  // guitar: read the text of the sheets (PDF text, pasted text, or text recognition)
+  useEffect(() => {
+    if (!guitar) return;
+    const todo = sheets.findIndex((s) => s.shown && !texts[s.id]);
+    if (todo < 0) {
+      setReading(null);
+      return;
+    }
+    let cancelled = false;
+    const s = sheets[todo];
+    setReading(sheets.length > 1 ? `Akkorde und Tabs werden gelesen (Blatt ${todo + 1}) …` : 'Akkorde und Tabs werden gelesen …');
+    sheetText(s.id, s.shown!)
+      .then((pieces) => linesFromPieces(pieces))
+      .catch(() => [] as TextLine[])
+      .then((lines) => {
+        if (cancelled) return;
+        setTexts((all) => ({ ...all, [s.id]: lines }));
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [guitar, sheets, texts]);
+
+  /** The guitar part of each sheet (chords, text tabs). */
+  const guitarSheets: (GuitarSheet | null)[] = useMemo(() => sheets.map((s) => {
+    if (!guitar || !s.shown || !texts[s.id]) return null;
+    const r = s.shown.result;
+    return analyzeSheet(texts[s.id], includeVocals ? r.score : r.withoutVocals, r.staffSpace, { beatsPerChord: gs.beatsPerChord });
+  }), [guitar, sheets, texts, includeVocals, gs.beatsPerChord]);
+
+  const score: PieceScore = useMemo(() => joinSheets(sheets.map((s, i): SheetPart | null => {
+    if (!s.shown) return null;
+    const r = s.shown.result;
+    const notes = includeVocals ? r.score : r.withoutVocals;
+    if (!guitar) return { score: notes };
+    const g = guitarSheets[i];
+    const extra: ExtraEvent[] = [];
+    if (g && gs.chords) {
+      for (const c of g.chords) for (const st of strums(c, gs.strum)) extra.push({ ...st, box: c.box, kind: 'chord' });
+    }
+    if (g && gs.melody) for (const t of g.tabNotes) extra.push({ start: t.start, duration: t.duration, pitches: t.pitches, box: t.box, strum: 0, kind: 'tab' });
+    // guitar music is written an octave higher than it sounds (a staff above a tablature)
+    return { score: notes, notes: gs.melody, transpose: (r.tabs?.length ?? 0) > 0 ? -12 : 0, extra, length: g?.length };
+  })), [sheets, includeVocals, guitar, guitarSheets, gs.chords, gs.melody, gs.strum]);
+  /** Notes on staves (not the strokes of chords or text tabs). */
+  const staffNotes = sheets.reduce((n, s) => n + (s.shown ? (includeVocals ? s.shown.result.score : s.shown.result.withoutVocals).events.filter((e) => e.pitches.length > 0).length : 0), 0);
+  const chordCount = guitarSheets.reduce((n, g) => n + (g?.chords.length ?? 0), 0);
+  const tabCount = guitarSheets.reduce((n, g) => n + (g?.tabNotes.length ?? 0), 0);
   const hasVocals = sheets.some((s) => s.shown?.result.score.staves.some((st) => st.vocal));
   const warnings = sheets.flatMap((s, i) => [
-    ...(s.shown?.result.warnings ?? []).map((w) => (sheets.length > 1 ? `Blatt ${i + 1}: ${w}` : w)),
+    ...(s.shown?.result.warnings ?? [])
+      // a song sheet or text tabs have no staves: no reason to warn in the guitar mode
+      .filter(() => !(guitar && ((guitarSheets[i]?.chords.length ?? 0) > 0 || (guitarSheets[i]?.tabNotes.length ?? 0) > 0)))
+      .map((w) => (sheets.length > 1 ? `Blatt ${i + 1}: ${w}` : w)),
     ...(s.error ? [`Blatt ${i + 1}: ${s.error}`] : []),
   ]);
   const noteCount = score.events.filter((e) => e.pitches.length > 0).length;
   /** All sheets are recognized (or failed); before that, the music is not complete. */
-  const ready = sheets.length > 0 && sheets.every((s) => s.shown || s.error);
+  const ready = sheets.length > 0 && sheets.every((s) => s.error || (s.shown && (!guitar || texts[s.id])));
 
   /** Measure numbers through the whole piece (for "ab Takt n"). */
   const measureOf = useMemo(() => {
     const numbers = new Map<string, number>();
     for (const e of score.events) {
+      if (e.system < 0) continue;
       const key = `${e.sheet}/${e.system}/${e.measure}`;
       if (!numbers.has(key)) numbers.set(key, numbers.size + 1);
     }
-    return (e: PieceEvent) => numbers.get(`${e.sheet}/${e.system}/${e.measure}`) ?? 1;
+    return (e: PieceEvent) => numbers.get(`${e.sheet}/${e.system}/${e.measure}`) ?? 0;
   }, [score]);
 
   const crops: Crop[] = useMemo(() => sheets.map((s, i) => {
     const shown = s.shown;
     if (!shown) return { top: 0, bottom: 1 };
-    const staves = shown.result.score.staves;
-    if (!cropPages || staves.length === 0) return { top: 0, bottom: shown.height };
+    // the staves and tablatures
+    const boxes = [...shown.result.score.staves.map((st) => st.box), ...(shown.result.tabs ?? [])];
+    if (!cropPages || boxes.length === 0) return { top: 0, bottom: shown.height };
     const ss = shown.result.staffSpace;
     // room for chord names, fingering and notes on ledger lines above and below the staves;
     // the first page keeps its title
-    const top = i === 0 ? 0 : Math.max(0, Math.min(...staves.map((st) => st.box[1])) - 5 * ss);
-    const bottom = Math.min(shown.height, Math.max(...staves.map((st) => st.box[3])) + 4 * ss);
+    const top = i === 0 ? 0 : Math.max(0, Math.min(...boxes.map((b) => b[1])) - 5 * ss);
+    const bottom = Math.min(shown.height, Math.max(...boxes.map((b) => b[3])) + 4 * ss);
     return { top, bottom: Math.max(bottom, top + 1) };
   }), [sheets, cropPages]);
 
   // the sound is prepared as soon as the music is complete, so that starting is immediate
   useEffect(() => {
-    if (ready && noteCount > 0) player.prepare(score, bpm, instrument).catch(() => undefined);
-  }, [ready, score, bpm, instrument]);
+    if (ready && noteCount > 0) player.prepare(score, bpm, sound).catch(() => undefined);
+  }, [ready, score, bpm, sound]);
 
   // --- playback --------------------------------------------------------------------------
 
@@ -161,7 +222,7 @@ export function PieceView(props: { piece: Piece; allCategories: string[]; allArt
     setError(null);
     setPreparing(true);
     try {
-      await player.prepare(score, bpm, instrument);
+      await player.prepare(score, bpm, sound);
       player.play(from);
       setPlaying(true);
       keepAwake(true);
@@ -184,7 +245,7 @@ export function PieceView(props: { piece: Piece; allCategories: string[]; allArt
       player.stop();
       void play(at);
     }
-  }, [bpm, instrument, score]);
+  }, [bpm, sound, score]);
 
   // position while playing, and the page follows the music
   const lastSystem = useRef<number>(-1);
@@ -365,6 +426,16 @@ export function PieceView(props: { piece: Piece; allCategories: string[]; allArt
   const files = useRef<HTMLInputElement>(null);
   const replaceInput = useRef<HTMLInputElement>(null);
   const replacing = useRef(-1);
+  const [pasting, setPasting] = useState(false);
+
+  const addText = async (text: string) => {
+    try {
+      const id = await textSheet(text, piece.name);
+      await changeSheets([...piece.sheets, id]);
+    } catch (e) {
+      setError((e as Error).message);
+    }
+  };
 
   const changeSheets = async (ids: string[], removed: string[] = []) => {
     stop();
@@ -424,13 +495,21 @@ export function PieceView(props: { piece: Piece; allCategories: string[]; allArt
     [playing, startTick, score, mode],
   );
   const startMeasure = useMemo(() => {
-    const e = score.events.find((x) => x.start >= startTick);
-    return e ? measureOf(e) : 1;
+    const e = score.events.find((x) => x.start >= startTick && x.system >= 0);
+    return e ? measureOf(e) : 0;
   }, [score, startTick, measureOf]);
   /** Recognized notes and rests per page, for the frames (the vocal line too, even if not played). */
   const notesBySheet = useMemo(
-    () => sheets.map((s) => (outline && mode === 'play' && s.shown ? s.shown.result.score.events : [])),
-    [outline, sheets, mode],
+    () => sheets.map((s, i): EventJ[] => {
+      if (!outline || mode !== 'play' || !s.shown) return [];
+      const g = guitarSheets[i];
+      const none = { start: 0, duration: 0, pitches: [], holds: [], staff: 0, system: -1, measure: -1 };
+      return [
+        ...s.shown.result.score.events,
+        ...(g ? [...g.chords.map((c) => ({ ...none, box: c.box })), ...g.tabNotes.map((t) => ({ ...none, box: t.box }))] : []),
+      ];
+    }),
+    [outline, sheets, mode, guitarSheets],
   );
 
   const mark = (e: EventJ, shown: ShownSheet, cls: string, k: number | string) => {
@@ -452,8 +531,11 @@ export function PieceView(props: { piece: Piece; allCategories: string[]; allArt
     void db.saveSetting(key, value);
   };
 
-  const status = working ?? (sheets.length > 0 && sheets.every((s) => s.shown || s.error)
-    ? (noteCount > 0 ? `${noteCount} Noten erkannt` : 'Keine Noten erkannt')
+  const status = working ?? reading ?? (sheets.length > 0 && sheets.every((s) => s.shown || s.error)
+    ? (guitar
+      ? ([chordCount > 0 && `${chordCount} Akkorde`, tabCount > 0 && `${tabCount} Tab-Noten`, staffNotes > 0 && `${staffNotes} Noten`]
+        .filter(Boolean).join(', ') || 'Nichts') + ' erkannt'
+      : noteCount > 0 ? `${noteCount} Noten erkannt` : 'Keine Noten erkannt')
     : '');
 
   return (
@@ -476,6 +558,7 @@ export function PieceView(props: { piece: Piece; allCategories: string[]; allArt
           <div class="row">
             <IconButton keepLabel icon="camera" label="Blatt fotografieren" onClick={() => camera.current?.click()} />
             <IconButton keepLabel icon="open" label="Bilder / PDF anhängen" onClick={() => files.current?.click()} />
+            <IconButton keepLabel icon="text" label="Text anhängen" onClick={() => { setSheetMenu(false); setPasting(true); }} />
           </div>
           {piece.sheets.map((id, i) => (
             <div class="row sheet" key={id}>
@@ -536,12 +619,54 @@ export function PieceView(props: { piece: Piece; allCategories: string[]; allArt
             <IconButton iconOnly icon="plus" label="Schneller" onClick={() => savePiece({ ...piece, bpm: Math.min(300, baseBpm + 4) })} />
           </div>
           <div class="row">
-            <span>Klang</span>
+            <span>Instrument</span>
             <span class="spacer" />
-            <select value={instrument} onChange={(e) => { setInstrument(e.currentTarget.value); void db.saveSetting('instrument', e.currentTarget.value); }}>
-              {INSTRUMENTS.map((i) => <option key={i.id} value={i.id}>{i.label}</option>)}
-            </select>
+            <div class="segmented">
+              <button class={!guitar ? 'on' : ''} onClick={() => { stop(); void savePiece({ ...piece, instrument: 'piano' }); }}>Klavier</button>
+              <button class={guitar ? 'on' : ''} onClick={() => { stop(); void savePiece({ ...piece, instrument: 'guitar' }); }}>Gitarre</button>
+            </div>
           </div>
+          {!guitar && (
+            <div class="row">
+              <span>Klang</span>
+              <span class="spacer" />
+              <select value={instrument} onChange={(e) => { setInstrument(e.currentTarget.value); void db.saveSetting('instrument', e.currentTarget.value); }}>
+                {INSTRUMENTS.map((i) => <option key={i.id} value={i.id}>{i.label}</option>)}
+              </select>
+            </div>
+          )}
+          {guitar && (
+            <>
+              <label class="row">
+                <span>Akkorde anschlagen</span>
+                <span class="spacer" />
+                <input type="checkbox" checked={gs.chords} onChange={(e) => void saveGuitar({ chords: e.currentTarget.checked })} />
+              </label>
+              <label class="row">
+                <span>Noten und Tabs spielen</span>
+                <span class="spacer" />
+                <input type="checkbox" checked={gs.melody} onChange={(e) => void saveGuitar({ melody: e.currentTarget.checked })} />
+              </label>
+              <div class="row">
+                <span>Anschlag</span>
+                <span class="spacer" />
+                <select value={gs.strum} onChange={(e) => void saveGuitar({ strum: e.currentTarget.value as StrumPattern })}>
+                  <option value="once">Einmal je Akkord</option>
+                  <option value="quarter">Jede Viertel (ab)</option>
+                  <option value="eighth">Achtel (ab und auf)</option>
+                </select>
+              </div>
+              {guitarSheets.some((g, i) => g && g.chords.length > 0 && !(sheets[i].shown?.result.score.staves.length)) && (
+                <div class="row">
+                  <span>Schläge je Akkord (Liedblatt ohne Noten)</span>
+                  <span class="spacer" />
+                  <IconButton iconOnly icon="minus" label="Weniger" onClick={() => void saveGuitar({ beatsPerChord: Math.max(1, gs.beatsPerChord - 1) })} />
+                  <span class="value">{gs.beatsPerChord}</span>
+                  <IconButton iconOnly icon="plus" label="Mehr" onClick={() => void saveGuitar({ beatsPerChord: Math.min(16, gs.beatsPerChord + 1) })} />
+                </div>
+              )}
+            </>
+          )}
           {hasVocals && (
             <label class="row">
               <span>Gesangsstimme mitspielen</span>
@@ -584,7 +709,7 @@ export function PieceView(props: { piece: Piece; allCategories: string[]; allArt
             <span class="value" title={`♩ = ${bpm}`}>{tempoPercent} %</span>
             <IconButton iconOnly icon="plus" label="Schneller" onClick={() => setTempoPercent(Math.min(200, tempoPercent + 10))} />
             {startTick > 0
-              ? <button class="start-chip ib" onClick={() => setStartTick(0)} title="Wieder vom Anfang"><span class="wide">ab Takt</span><span class="narrow">T.</span> {startMeasure}<Icon name="close" /></button>
+              ? <button class="start-chip ib" onClick={() => setStartTick(0)} title="Wieder vom Anfang">{startMeasure > 0 ? <><span class="wide">ab Takt</span><span class="narrow">T.</span> {startMeasure}</> : <>ab hier</>}<Icon name="close" /></button>
               : <span class="muted small hint">Startstelle: Note antippen</span>}
           </>
         ) : (
@@ -600,6 +725,7 @@ export function PieceView(props: { piece: Piece; allCategories: string[]; allArt
         <IconButton iconOnly class={panel ? 'on' : ''} icon="settings" label="Einstellungen" onClick={() => setPanel(!panel)} />
       </footer>
 
+      {pasting && <TextDialog onClose={() => setPasting(false)} onDone={(text) => { setPasting(false); void addText(text); }} />}
       {editing && (
         <PieceDialog
           piece={piece}

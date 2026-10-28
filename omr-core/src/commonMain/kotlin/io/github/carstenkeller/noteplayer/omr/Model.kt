@@ -66,6 +66,8 @@ class RecognitionResult(
     val staffSpace: Double,
     val skewDegrees: Double,
     val warnings: List<String>,
+    /** Guitar tablature staves (six lines); their numbers are not read as notes. */
+    val tabs: List<Box> = emptyList(),
 ) {
     val hasVocals: Boolean get() = score.staves.any { it.isVocal }
 }

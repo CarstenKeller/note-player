@@ -26,7 +26,8 @@ function serviceWorker(): Plugin {
         return statSync(p).isDirectory() ? walk(p) : [relative(publicDir, p)];
       });
       const files = ['./', ...Object.keys(bundle), ...walk(publicDir)]
-        .filter((f) => !f.endsWith('.map'))
+        // the text recognition (large) is stored when it is first used, see below
+        .filter((f) => !f.endsWith('.map') && !f.split('\\').join('/').startsWith('ocr/'))
         .map((f) => (f === './' ? f : './' + f.split('\\').join('/')));
       this.emitFile({
         type: 'asset',
@@ -44,7 +45,8 @@ self.addEventListener('install', (e) => {
   e.waitUntil(caches.open(CACHE).then((c) => c.addAll(FILES)));
 });
 self.addEventListener('activate', (e) => {
-  e.waitUntil(caches.keys().then((keys) => Promise.all(keys.filter((k) => k !== CACHE).map((k) => caches.delete(k)))).then(() => self.clients.claim()));
+  // the text recognition's cache is kept across versions (it changes rarely)
+  e.waitUntil(caches.keys().then((keys) => Promise.all(keys.filter((k) => k !== CACHE && k !== 'notenspieler-ocr').map((k) => caches.delete(k)))).then(() => self.clients.claim()));
 });
 self.addEventListener('message', (e) => { if (e.data === 'skipWaiting') self.skipWaiting(); });
 self.addEventListener('fetch', (e) => {
@@ -53,6 +55,14 @@ self.addEventListener('fetch', (e) => {
   if (req.mode === 'navigate') {
     // the page itself: the newest from the network, the stored one offline
     e.respondWith(fetch(req).catch(() => caches.match('./', { ignoreSearch: true })));
+    return;
+  }
+  if (new URL(req.url).pathname.includes('/ocr/')) {
+    // the text recognition: kept after its first use (then also offline)
+    e.respondWith(caches.open('notenspieler-ocr').then((c) => c.match(req).then((hit) => hit || fetch(req).then((res) => {
+      if (res.ok) c.put(req, res.clone());
+      return res;
+    }))));
     return;
   }
   e.respondWith(caches.match(req, { ignoreSearch: true }).then((hit) => hit || fetch(req)));

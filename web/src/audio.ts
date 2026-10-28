@@ -1,7 +1,7 @@
-// Playback: the piece is rendered as a whole (in the worker, with the recorded piano notes) and
-// played with Web Audio; the musical position follows from the playback time.
+// Playback: the piece is rendered as a whole (in the worker, with the recorded piano or guitar
+// notes) and played with Web Audio; the musical position follows from the playback time.
 
-import { render, sendSamples } from './engine';
+import { render, sendSamples, type SampleKind } from './engine';
 import { secondsOf, ticksOf, type PieceScore } from './score';
 
 export const INSTRUMENTS: { id: string; label: string }[] = [
@@ -11,9 +11,15 @@ export const INSTRUMENTS: { id: string; label: string }[] = [
   { id: 'HARP', label: 'Harfe' },
 ];
 
-// recorded notes: C, D#, F#, A of each octave
-const SAMPLE_NAMES = ['A0', 'C1', 'Ds1', 'Fs1', 'A1', 'C2', 'Ds2', 'Fs2', 'A2', 'C3', 'Ds3', 'Fs3', 'A3', 'C4', 'Ds4', 'Fs4', 'A4',
+/** The sound of the guitar mode. */
+export const GUITAR = 'GUITAR';
+
+// recorded piano notes: C, D#, F#, A of each octave
+const PIANO_NAMES = ['A0', 'C1', 'Ds1', 'Fs1', 'A1', 'C2', 'Ds2', 'Fs2', 'A2', 'C3', 'Ds3', 'Fs3', 'A3', 'C4', 'Ds4', 'Fs4', 'A4',
   'C5', 'Ds5', 'Fs5', 'A5', 'C6', 'Ds6', 'Fs6', 'A6', 'C7', 'Ds7', 'Fs7', 'A7', 'C8'];
+// recorded guitar notes: nearly every semitone from the low E to C#5
+const GUITAR_NAMES = ['E2', 'F2', 'Fs2', 'G2', 'Gs2', 'A2', 'As2', 'B2', 'C3', 'Cs3', 'D2', 'D3', 'Ds2', 'Ds3', 'E3', 'F3', 'Fs3',
+  'G3', 'Gs3', 'A3', 'As3', 'B3', 'C4', 'Cs4', 'D4', 'Ds4', 'E4', 'F4', 'Fs4', 'G4', 'Gs4', 'A4', 'As4', 'B4', 'C5', 'Cs5', 'D5'];
 
 function pitchOf(name: string): number {
   const base: Record<string, number> = { C: 0, D: 2, E: 4, F: 5, G: 7, A: 9, B: 11 };
@@ -26,14 +32,14 @@ function encode(score: PieceScore): Int32Array {
   const out: number[] = [];
   for (const e of score.events) {
     if (e.pitches.length === 0) continue;
-    out.push(e.start, e.start + e.duration, e.staff, e.pitches.length, ...e.pitches, e.holds.length, ...e.holds);
+    out.push(e.start, e.start + e.duration, e.staff, e.strum ?? 0, e.pitches.length, ...e.pitches, e.holds.length, ...e.holds);
   }
   return Int32Array.from(out);
 }
 
 export class Player {
   private ctx: AudioContext | null = null;
-  private samplesLoaded: Promise<void> | null = null;
+  private samplesLoaded = new Map<SampleKind, Promise<void>>();
   private buffer: AudioBuffer | null = null;
   private preparedFor: { score: PieceScore; bpm: number; instrument: string } | null = null;
   private source: AudioBufferSourceNode | null = null;
@@ -62,22 +68,25 @@ export class Player {
     return this.ctx;
   }
 
-  private loadSamples(): Promise<void> {
-    if (!this.samplesLoaded) {
-      this.samplesLoaded = (async () => {
+  private loadSamples(kind: SampleKind): Promise<void> {
+    let loaded = this.samplesLoaded.get(kind);
+    if (!loaded) {
+      loaded = (async () => {
         const ctx = this.ctx!;
-        const decoded = await Promise.all(SAMPLE_NAMES.map(async (n) => {
-          const res = await fetch(`./piano/${n}.mp3`);
-          if (!res.ok) throw new Error('Die Klavierklänge konnten nicht geladen werden.');
+        const names = kind === 'guitar' ? GUITAR_NAMES : PIANO_NAMES;
+        const decoded = await Promise.all(names.map(async (n) => {
+          const res = await fetch(`./${kind}/${n}.mp3`);
+          if (!res.ok) throw new Error(kind === 'guitar' ? 'Die Gitarrenklänge konnten nicht geladen werden.' : 'Die Klavierklänge konnten nicht geladen werden.');
           const buf = await ctx.decodeAudioData(await res.arrayBuffer());
           return { pitch: pitchOf(n), data: buf.getChannelData(0).slice(), rate: buf.sampleRate };
         }));
         // decodeAudioData gives the rate of the audio context; all samples share it
-        await sendSamples(decoded.map((d) => d.pitch), decoded.map((d) => d.data), decoded[0].rate);
+        await sendSamples(kind, decoded.map((d) => d.pitch), decoded.map((d) => d.data), decoded[0].rate);
       })();
-      this.samplesLoaded.catch(() => (this.samplesLoaded = null));
+      this.samplesLoaded.set(kind, loaded);
+      loaded.catch(() => this.samplesLoaded.delete(kind));
     }
-    return this.samplesLoaded;
+    return loaded;
   }
 
   /**
@@ -101,7 +110,7 @@ export class Player {
 
   private async render(score: PieceScore, bpm: number, instrument: string): Promise<void> {
     this.context();
-    await this.loadSamples();
+    await this.loadSamples(instrument === GUITAR ? 'guitar' : 'piano');
     const { audio, rate } = await render(encode(score), score.bassStaves, score.tpq, bpm, instrument);
     const buffer = this.ctx!.createBuffer(1, Math.max(1, audio.length), rate);
     buffer.copyToChannel(audio, 0);

@@ -37,6 +37,7 @@ object WebOmr {
         val json = Json().obj {
             num("staffSpace", r.staffSpace)
             num("skew", r.skewDegrees)
+            arr("tabs") { for (b in r.tabs) box(b) }
             arr("warnings") { for (w in r.warnings) str(w) }
             key("score"); score(r.score)
             key("withoutVocals"); score(r.withoutVocals)
@@ -56,8 +57,9 @@ object WebOmr {
     /**
      * Renders the music as sound (mono, [sampleRate] samples per second).
      *
-     * [events] lists each sounding event as: start tick, end tick, staff index, number of
-     * pitches, the pitches, number of held (tied) pitches, the held pitches. [bassStaves]
+     * [events] lists each sounding event as: start tick, end tick, staff index, strum (0 = all
+     * notes together, 1 = guitar downstroke, -1 = upstroke), number of pitches, the pitches,
+     * number of held (tied) pitches, the held pitches. [bassStaves]
      * marks staves in the bass clef (played a little softer). [samples] are the piano
      * recordings: [samplePitches] tells the MIDI pitch of each, all at [samplesRate].
      */
@@ -72,29 +74,35 @@ object WebOmr {
         samplesRate: Int,
     ): FloatArray {
         val list = ArrayList<MusicEvent>()
+        val strums = HashMap<MusicEvent, Int>()
         var i = 0
         val noBox = Box(0f, 0f, 0f, 0f)
         while (i < events.size) {
             val start = events[i]
             val end = events[i + 1]
             val staff = events[i + 2]
-            val n = events[i + 3]
-            val pitches = (0 until n).map { events[i + 4 + it] }
-            i += 4 + n
+            val strum = events[i + 3]
+            val n = events[i + 4]
+            val pitches = (0 until n).map { events[i + 5 + it] }
+            i += 5 + n
             val h = events[i]
             val holds = (0 until h).map { events[i + 1 + it] }
             i += 1 + h
-            list += MusicEvent(start, end - start, pitches, noBox, staff, 0, 0, holds)
+            val e = MusicEvent(start, end - start, pitches, noBox, staff, 0, list.size, holds)
+            list += e
+            if (strum != 0) strums[e] = strum
         }
-        val staves = (0..(list.maxOfOrNull { it.staffIndex } ?: 0)).map {
-            StaffInfo(it, 0, noBox, if (it in bassStaves) Clef.BASS else Clef.TREBLE, 0)
-        }
+        // staff numbers can be large (a marker for the accompaniment): numbered anew from 0
+        val used = list.map { it.staffIndex }.distinct().sorted()
+        val index = used.withIndex().associate { (k, v) -> v to k }
+        val compact = list.map { e -> e.copy(staffIndex = index.getValue(e.staffIndex)).also { c -> strums[e]?.let { strums[c] = it } } }
+        val staves = used.mapIndexed { k, s -> StaffInfo(k, 0, noBox, if (s in bassStaves) Clef.BASS else Clef.TREBLE, 0) }
         val bank = samplePitches.indices.map { Sample(samplePitches[it], samples[it], samplesRate) }
         val source = object : SampleSource {
             override fun nearest(pitch: Int) = bank.minBy { abs(it.pitch - pitch) }
         }
         val inst = Instrument.entries.firstOrNull { it.name == instrument } ?: Instrument.GRAND_PIANO
-        return Renderer.render(Score(tpq, list, staves, emptyList()), bpm, inst, source)
+        return Renderer.render(Score(tpq, compact, staves, emptyList()), bpm, inst, source) { strums[it] ?: 0 }
     }
 
     /** The sample rate of [render]. */

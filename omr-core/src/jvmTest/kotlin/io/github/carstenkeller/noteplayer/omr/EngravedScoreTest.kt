@@ -193,4 +193,23 @@ class EngravedScoreTest {
             s.events.joinToString(" ") { "${it.startTick}/${it.durationTicks}" },
         )
     }
+
+    /**
+     * Guitar music: a staff with the notes above a tablature staff (six lines with fret numbers)
+     * and chord names, engraved with LilyPond (C time signature). The tablature is not read as a
+     * staff; its numbers are no notes. The C time signature is no key signature.
+     */
+    @Test
+    fun notesAboveTablature() {
+        val r = recognizeFull("notes_tab.png")
+        assertEquals(1, r.score.staves.size)
+        assertEquals(1, r.tabs.size)
+        assertEquals(0, r.score.staves[0].keyFifths)
+        // written pitches (the guitar sounds an octave lower)
+        assertEquals(
+            "E5/480 G5/480 C6/480 G5/480 A5/960 E5/480 C5/480 F5/480 A5/480 C6/480 A5/480 G5/960 B4/960 " +
+                "C5/480 E5/480 G5/480 E5/480 E5/240 G5/240 B5/240 G5/240 E5/960 D5/480 F5/480 A5/480 F5/480 G5/1920",
+            describe(r.score),
+        )
+    }
 }

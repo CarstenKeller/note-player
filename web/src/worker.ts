@@ -7,8 +7,8 @@ const omr = WebOmr.getInstance();
 
 export type Request =
   | { type: 'recognize'; id: number; blob: Blob }
-  | { type: 'samples'; id: number; pitches: number[]; data: Float32Array[]; rate: number }
-  | { type: 'render'; id: number; events: Int32Array; bassStaves: number[]; tpq: number; bpm: number; instrument: string };
+  | { type: 'samples'; id: number; kind: string; pitches: number[]; data: Float32Array[]; rate: number }
+  | { type: 'render'; id: number; kind: string; events: Int32Array; bassStaves: number[]; tpq: number; bpm: number; instrument: string };
 
 export type Response =
   | { id: number; ok: true; width?: number; height?: number; page?: Blob; json?: string; audio?: Float32Array; rate?: number }
@@ -26,7 +26,8 @@ function maxSideFor(width: number, height: number): number {
   return Math.max(2400, Math.min(keepShort, pixelLimit));
 }
 
-let samples: { pitches: number[]; data: Float32Array[]; rate: number } | null = null;
+/** Recordings by kind (piano, guitar). */
+const samples = new Map<string, { pitches: number[]; data: Float32Array[]; rate: number }>();
 
 async function recognize(blob: Blob) {
   const bitmap = await createImageBitmap(blob, { imageOrientation: 'from-image' });
@@ -65,11 +66,12 @@ self.onmessage = async (e: MessageEvent<Request>) => {
     if (req.type === 'recognize') {
       reply({ id: req.id, ok: true, ...(await recognize(req.blob)) });
     } else if (req.type === 'samples') {
-      samples = { pitches: req.pitches, data: req.data, rate: req.rate };
+      samples.set(req.kind, { pitches: req.pitches, data: req.data, rate: req.rate });
       reply({ id: req.id, ok: true });
     } else if (req.type === 'render') {
-      if (!samples) throw new Error('Die Klavierklänge sind noch nicht geladen.');
-      const audio = omr.render(req.events, req.bassStaves, req.tpq, req.bpm, req.instrument, samples.pitches, samples.data, samples.rate);
+      const bank = samples.get(req.kind);
+      if (!bank) throw new Error('Die Klänge sind noch nicht geladen.');
+      const audio = omr.render(req.events, req.bassStaves, req.tpq, req.bpm, req.instrument, bank.pitches, bank.data, bank.rate);
       reply({ id: req.id, ok: true, audio, rate: omr.sampleRate }, [audio.buffer]);
     }
   } catch (err) {

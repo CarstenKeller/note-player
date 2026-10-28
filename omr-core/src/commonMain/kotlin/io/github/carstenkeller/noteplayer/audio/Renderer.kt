@@ -30,16 +30,23 @@ object Renderer {
 
     fun secondsOf(ticks: Int, bpm: Int, tpq: Int) = ticks * 60.0 / (bpm * tpq)
 
-    fun render(score: Score, bpm: Int, instrument: Instrument, bank: SampleSource): FloatArray {
+    /** Time between two strings of a strummed chord, in seconds. */
+    private const val STRUM_STEP = 0.018
+
+    /**
+     * [strum] tells for an event whether its notes are strummed like a guitar chord: 0 = struck
+     * together, 1 = downstroke (lowest string first), -1 = upstroke (highest first).
+     */
+    fun render(score: Score, bpm: Int, instrument: Instrument, bank: SampleSource, strum: (MusicEvent) -> Int = { 0 }): FloatArray {
         val tpq = score.ticksPerQuarter
         val total = secondsOf(score.totalTicks, bpm, tpq) + 2.0
         val out = FloatArray((total * RATE).toInt() + 1)
         val random = Random(1)
-        for (n in notes(score)) {
-            val start = (secondsOf(n.startTick, bpm, tpq) * RATE).toInt()
-            val length = secondsOf(n.endTick - n.startTick, bpm, tpq)
+        for (n in notes(score, strum)) {
+            val start = ((secondsOf(n.startTick, bpm, tpq) + n.delay) * RATE).toInt()
+            val length = secondsOf(n.endTick - n.startTick, bpm, tpq) - n.delay
             when (instrument) {
-                Instrument.GRAND_PIANO -> piano(out, start, length, n.pitch, n.gain, bank)
+                Instrument.GRAND_PIANO, Instrument.GUITAR -> piano(out, start, length, n.pitch, n.gain, bank)
                 Instrument.ELECTRIC_PIANO -> electricPiano(out, start, length, n.pitch, n.gain)
                 Instrument.ORGAN -> organ(out, start, length, n.pitch, n.gain)
                 Instrument.HARP -> harp(out, start, length, n.pitch, n.gain, random)
@@ -50,13 +57,13 @@ object Renderer {
         return withRoom
     }
 
-    private class Note(val pitch: Int, val startTick: Int, var endTick: Int, val gain: Float)
+    private class Note(val pitch: Int, val startTick: Int, var endTick: Int, val gain: Float, val delay: Double = 0.0)
 
     /**
      * The notes to strike. A tied note ([MusicEvent.holds]) is not struck again: the note of
      * the same pitch that has just ended is lengthened instead.
      */
-    private fun notes(score: Score): List<Note> {
+    private fun notes(score: Score, strum: (MusicEvent) -> Int): List<Note> {
         val notes = ArrayList<Note>()
         val sounding = HashMap<Int, Note>() // pitch -> latest note of that pitch
         for (e in score.events.sortedBy { it.startTick }) {
@@ -65,13 +72,22 @@ object Renderer {
             // the accompaniment in the bass clef a bit softer than the melody
             val bass = score.staves.getOrNull(e.staffIndex)?.clef == Clef.BASS
             val gain = 0.32f / (1 + 0.15f * (e.pitches.size - 1)) * (if (bass) 0.7f else 1f)
-            for (p in e.pitches) {
+            val direction = strum(e)
+            // a strummed chord: the strings one after the other, an upstroke a bit softer
+            val order = when (direction) {
+                1 -> e.pitches.sorted()
+                -1 -> e.pitches.sortedDescending()
+                else -> e.pitches
+            }
+            for ((k, p) in order.withIndex()) {
+                val delay = if (direction == 0) 0.0 else k * STRUM_STEP
+                val noteGain = if (direction == -1) gain * 0.75f else gain
                 val previous = sounding[p]
                 // the tied note must follow right after (a little slack for timing corrections)
                 if (p in e.holds && previous != null && abs(previous.endTick - e.startTick) <= score.ticksPerQuarter / 4) {
                     previous.endTick = maxOf(previous.endTick, e.endTick)
                 } else {
-                    val n = Note(p, e.startTick, e.endTick, gain)
+                    val n = Note(p, e.startTick, e.endTick, noteGain, delay)
                     notes += n
                     sounding[p] = n
                 }

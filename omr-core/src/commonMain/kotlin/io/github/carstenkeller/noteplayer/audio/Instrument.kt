@@ -7,4 +7,6 @@ enum class Instrument(val label: String) {
     ELECTRIC_PIANO("E-Piano"),
     ORGAN("Orgel"),
     HARP("Harfe"),
+    /** Recorded acoustic guitar (the web app's guitar mode; samples are decoded by the platform). */
+    GUITAR("Gitarre"),
 }
