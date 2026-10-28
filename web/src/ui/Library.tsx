@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'preact/hooks';
 import { db, persist, type Piece } from '../db';
 import { BackupStatus } from './BackupStatus';
+import { IconButton } from './Icon';
 import { PieceDialog, collator } from './PieceDialog';
 
 const NONE = '\u0000ohne';
@@ -68,8 +69,8 @@ export function Library(props: {
         <h1>Notenspieler</h1>
         <BackupStatus settings onRestored={() => void reload()} />
         <span class="spacer" />
-        <button class="primary" onClick={() => camera.current?.click()}>📷 Foto</button>
-        <button class="primary" onClick={() => files.current?.click()}>＋ Bilder / PDF</button>
+        <IconButton class="primary" icon="camera" label="Foto" onClick={() => camera.current?.click()} />
+        <IconButton class="primary" icon="open" label="Bilder / PDF" onClick={() => files.current?.click()} />
         <input ref={camera} type="file" accept="image/*" capture="environment" hidden onChange={(e) => picked(e.currentTarget)} />
         <input ref={files} type="file" accept="image/*,application/pdf,.pdf" multiple hidden onChange={(e) => picked(e.currentTarget)} />
       </header>
@@ -83,9 +84,9 @@ export function Library(props: {
           </select>
         )}
         <div class="segmented">
-          <button class={sort === 'name' ? 'on' : ''} onClick={() => chooseSort('name')}>A–Z</button>
-          <button class={sort === 'artist' ? 'on' : ''} onClick={() => chooseSort('artist')}>Interpret</button>
-          <button class={sort === 'recent' ? 'on' : ''} onClick={() => chooseSort('recent')}>Zuletzt</button>
+          <IconButton class={sort === 'name' ? 'on' : ''} icon="sortName" label="Nach Name" onClick={() => chooseSort('name')} />
+          <IconButton class={sort === 'artist' ? 'on' : ''} icon="person" label="Nach Interpret" onClick={() => chooseSort('artist')} />
+          <IconButton class={sort === 'recent' ? 'on' : ''} icon="clock" label="Zuletzt geöffnet" onClick={() => chooseSort('recent')} />
         </div>
       </div>
 
@@ -113,7 +114,7 @@ export function Library(props: {
                 <span class="muted">{p.sheets.length === 1 ? '1 Blatt' : `${p.sheets.length} Blätter`}</span>
               </div>
             </div>
-            <button class="icon" aria-label="Bearbeiten" onClick={(e) => { e.stopPropagation(); setEditing(p); }}>⋯</button>
+            <IconButton iconOnly icon="more" label="Bearbeiten" onClick={(e) => { e.stopPropagation(); setEditing(p); }} />
           </li>
         ))}
       </ul>

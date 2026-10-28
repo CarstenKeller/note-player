@@ -223,7 +223,7 @@ input[type='checkbox'] { width: 24px; height: 24px; }
 .search select { flex: 0 1 220px; }
 
 /* --- backup state --- */
-.backup-status { min-width: 36px; min-height: 36px; padding: 0; border-radius: 18px; font-weight: 700; }
+.backup-status { width: 44px; min-height: 44px; padding: 0; border-radius: 22px; font-weight: 700; display: inline-flex; align-items: center; justify-content: center; }
 .backup-status.ok { color: #1e8a3c; border-color: #9fd3ad; background: #eef8f1; }
 .backup-status.saving { color: var(--muted); }
 .backup-status.unsaved, .backup-status.error { color: #b45309; border-color: #f0c27b; background: #fff6e0; }
@@ -235,3 +235,33 @@ input[type='checkbox'] { width: 24px; height: 24px; }
 .backup-line.error .backup-symbol { color: var(--danger); }
 .dialog label.row { flex-wrap: nowrap; align-items: flex-start; }
 .dialog input[type='radio'] { width: 22px; height: 22px; flex: none; margin-top: 2px; }
+
+/* --- icon buttons --- */
+.ib { display: inline-flex; align-items: center; justify-content: center; gap: 6px; white-space: nowrap; }
+.ib.only { width: 44px; padding: 0; }
+.ib.big { width: 64px; }
+.ic { width: 22px; height: 22px; flex: none; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+.ic .filled { fill: currentColor; stroke: none; }
+.backup-status .ic { width: 20px; height: 20px; stroke-width: 2.5; }
+.backup-symbol .ic { width: 20px; height: 20px; }
+.narrow { display: none; }
+
+/* small screens (phones): icons only, the label is the tooltip */
+@media (max-width: 760px) {
+  .ib:not(.keep) .ib-label { display: none; }
+  .ib:not(.keep) { width: 44px; padding: 0; }
+  .ib.big { width: 44px; min-width: 44px; }
+  .start-chip.ib { width: auto; padding: 0 6px; gap: 2px; }
+  .start-chip .ic { width: 16px; height: 16px; }
+  .wide, .hint { display: none; }
+  .narrow { display: inline; }
+  /* the number of recognized notes only while working (no room) */
+  .status:not(.working) { display: none; }
+  .bar, .controls, .footer { gap: 4px; padding-left: 8px; padding-right: 8px; }
+  .value { min-width: 46px; }
+  .bar h1 { font-size: 19px; }
+  /* the bottom bar in one line on a phone */
+  .controls button { min-width: 40px; }
+  .controls .ib:not(.keep):not(.start-chip) { width: 40px; }
+  .controls .value { min-width: 42px; font-size: 15px; }
+}

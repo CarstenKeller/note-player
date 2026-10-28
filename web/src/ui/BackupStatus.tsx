@@ -4,6 +4,7 @@ import {
   type BackupState, type ManualMethod,
 } from '../autobackup';
 import { importAll } from '../backup';
+import { Icon, IconButton } from './Icon';
 
 const when = (t?: number) =>
   t ? new Date(t).toLocaleString('de-DE', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' }) : '';
@@ -18,7 +19,7 @@ export function BackupStatus(props: { settings?: boolean; onRestored?: () => voi
   const [open, setOpen] = useState(false);
   useEffect(() => subscribe(setState), []);
 
-  const symbol = state.status === 'ok' ? '✓' : state.status === 'saving' ? '⟳' : '⚠';
+  const symbol = <Icon name={state.status === 'ok' ? 'check' : state.status === 'saving' ? 'sync' : 'warn'} />;
   const title = state.status === 'ok'
     ? (state.savedAt ? `Gesichert am ${when(state.savedAt)}` : 'Nichts zu sichern')
     : state.status === 'saving' ? 'Wird gesichert …' : 'Nicht gesichert – antippen';
@@ -26,7 +27,7 @@ export function BackupStatus(props: { settings?: boolean; onRestored?: () => voi
   return (
     <>
       <button class={'backup-status ' + state.status} title={title} aria-label={title} onClick={() => setOpen(true)}>{symbol}</button>
-      {props.settings && <button class="icon" aria-label="Einstellungen" onClick={() => setOpen(true)}>⚙</button>}
+      {props.settings && <IconButton iconOnly icon="settings" label="Einstellungen" onClick={() => setOpen(true)} />}
       {open && <BackupDialog state={state} onClose={() => setOpen(false)} onRestored={props.onRestored} />}
     </>
   );
@@ -64,7 +65,7 @@ function BackupDialog(props: { state: BackupState; onClose: () => void; onRestor
         <h2>Sicherung</h2>
 
         <div class={'backup-line ' + state.status}>
-          <span class="backup-symbol">{state.status === 'ok' ? '✓' : state.status === 'saving' ? '⟳' : '⚠'}</span>
+          <span class="backup-symbol"><Icon name={state.status === 'ok' ? 'check' : state.status === 'saving' ? 'sync' : 'warn'} /></span>
           <span>
             {state.status === 'ok' && (state.savedAt ? `Alles gesichert (zuletzt am ${when(state.savedAt)}).` : 'Noch nichts zu sichern.')}
             {state.status === 'saving' && 'Wird gesichert …'}
@@ -94,7 +95,7 @@ function BackupDialog(props: { state: BackupState; onClose: () => void; onRestor
               <span class="muted">
                 Safari (iPad, iPhone, Mac) erlaubt einer Web-App nicht, selbständig in eine Datei zu
                 schreiben. Die Sicherung wird deshalb nach jeder Änderung im Hintergrund vorbereitet,
-                und das Symbol zeigt ⚠, bis sie mit einem Tippen auf „Jetzt sichern“ gespeichert ist.
+                und das Symbol zeigt ein Warnzeichen, bis sie mit einem Tippen auf „Jetzt sichern“ gespeichert ist.
               </span>
               <label class="row">
                 <input type="radio" name="method" checked={method === 'share'} onChange={() => chooseMethod('share')} />

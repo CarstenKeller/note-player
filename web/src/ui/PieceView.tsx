@@ -8,6 +8,7 @@ import { keepAwake } from '../wakelock';
 import { download } from '../backup';
 import { PieceDialog } from './PieceDialog';
 import { BackupStatus } from './BackupStatus';
+import { Icon, IconButton } from './Icon';
 
 /** Without a setting, 100 % means 120 quarter notes per minute (tempo marks are not read). */
 const DEFAULT_BPM = 120;
@@ -419,8 +420,8 @@ export function PieceView(props: { piece: Piece; allCategories: string[]; allArt
   const lit: PieceEvent[] = useMemo(() => litNow.map((k) => score.events[k]).filter(Boolean), [litNow, score]);
   /** The chosen start: the notes there are marked while the music stands. */
   const startEvents = useMemo(
-    () => (playing || startTick === 0 ? [] : score.events.filter((e) => e.start === startTick && e.pitches.length > 0)),
-    [playing, startTick, score],
+    () => (playing || startTick === 0 || mode !== 'play' ? [] : score.events.filter((e) => e.start === startTick && e.pitches.length > 0)),
+    [playing, startTick, score, mode],
   );
   const startMeasure = useMemo(() => {
     const e = score.events.find((x) => x.start >= startTick);
@@ -458,30 +459,30 @@ export function PieceView(props: { piece: Piece; allCategories: string[]; allArt
   return (
     <div class="piece">
       <header class="bar">
-        <button class="icon" aria-label="Zurück" onClick={() => { stop(); props.onBack(); }}>‹</button>
+        <IconButton iconOnly icon="back" label="Zurück zur Bibliothek" onClick={() => { stop(); props.onBack(); }} />
         <button class="title" onClick={() => setEditing(true)} title="Name und Rubriken">
           <span class="name">{piece.name}</span>
           {piece.artist && <span class="muted"> – {piece.artist}</span>}
           {piece.categories.length > 0 && <span class="muted small"> · {piece.categories.join(', ')}</span>}
         </button>
         <span class="spacer" />
-        <span class="muted small status">{status}</span>
+        <span class={'muted small status' + (working ? ' working' : '')}>{status}</span>
         <BackupStatus />
-        <button onClick={() => setSheetMenu(!sheetMenu)}>Blätter ▾</button>
+        <IconButton class={sheetMenu ? 'on' : ''} icon="sheets" label="Blätter" onClick={() => setSheetMenu(!sheetMenu)} />
       </header>
 
       {sheetMenu && (
         <div class="menu" onClick={(e) => e.stopPropagation()}>
           <div class="row">
-            <button onClick={() => camera.current?.click()}>📷 Blatt fotografieren</button>
-            <button onClick={() => files.current?.click()}>＋ Bilder / PDF anhängen</button>
+            <IconButton keepLabel icon="camera" label="Blatt fotografieren" onClick={() => camera.current?.click()} />
+            <IconButton keepLabel icon="open" label="Bilder / PDF anhängen" onClick={() => files.current?.click()} />
           </div>
           {piece.sheets.map((id, i) => (
             <div class="row sheet" key={id}>
               <span>Blatt {i + 1}{sheets[i]?.error ? ' – nicht erkannt' : ''}</span>
               <span class="spacer" />
-              <button class="icon" disabled={i === 0} onClick={() => move(i, -1)} aria-label="nach oben">↑</button>
-              <button class="icon" disabled={i === piece.sheets.length - 1} onClick={() => move(i, 1)} aria-label="nach unten">↓</button>
+              <IconButton iconOnly icon="up" label="Nach oben" disabled={i === 0} onClick={() => move(i, -1)} />
+              <IconButton iconOnly icon="down" label="Nach unten" disabled={i === piece.sheets.length - 1} onClick={() => move(i, 1)} />
               <button onClick={() => { replacing.current = i; replaceInput.current?.click(); }}>Ersetzen</button>
               <button onClick={() => saveOriginal(i)}>Original sichern</button>
               <button class="danger-outline" disabled={piece.sheets.length === 1} onClick={() => changeSheets(piece.sheets.filter((x) => x !== id), [id])}>Entfernen</button>
@@ -530,9 +531,9 @@ export function PieceView(props: { piece: Piece; allCategories: string[]; allArt
           <div class="row">
             <span>Grundtempo (100 %)</span>
             <span class="spacer" />
-            <button onClick={() => savePiece({ ...piece, bpm: Math.max(20, baseBpm - 4) })}>−</button>
+            <IconButton iconOnly icon="minus" label="Langsamer" onClick={() => savePiece({ ...piece, bpm: Math.max(20, baseBpm - 4) })} />
             <span class="value">♩ = {baseBpm}</span>
-            <button onClick={() => savePiece({ ...piece, bpm: Math.min(300, baseBpm + 4) })}>+</button>
+            <IconButton iconOnly icon="plus" label="Schneller" onClick={() => savePiece({ ...piece, bpm: Math.min(300, baseBpm + 4) })} />
           </div>
           <div class="row">
             <span>Klang</span>
@@ -561,41 +562,42 @@ export function PieceView(props: { piece: Piece; allCategories: string[]; allArt
           <div class="row">
             <span>Ansicht</span>
             <span class="spacer" />
-            <button onClick={() => zoomBy(1 / 1.25)} disabled={zoom <= 1}>−</button>
+            <IconButton iconOnly icon="minus" label="Verkleinern" onClick={() => zoomBy(1 / 1.25)} disabled={zoom <= 1} />
             <span class="value">{Math.round(zoom * 100)} %</span>
-            <button onClick={() => zoomBy(1.25)} disabled={zoom >= MAX_ZOOM}>+</button>
+            <IconButton iconOnly icon="plus" label="Vergrößern" onClick={() => zoomBy(1.25)} disabled={zoom >= MAX_ZOOM} />
           </div>
         </div>
       )}
 
       <footer class="controls">
         <div class="segmented">
-          <button class={mode === 'play' ? 'on' : ''} onClick={() => switchMode('play')}>Abspielen</button>
-          <button class={mode === 'scroll' ? 'on' : ''} onClick={() => switchMode('scroll')}>Scrollen</button>
+          <IconButton class={mode === 'play' ? 'on' : ''} icon="note" label="Abspielen" onClick={() => switchMode('play')} />
+          <IconButton class={mode === 'scroll' ? 'on' : ''} icon="scroll" label="Scrollen" onClick={() => switchMode('scroll')} />
         </div>
         {mode === 'play' ? (
           <>
-            <button class="primary big" disabled={noteCount === 0 || preparing || !ready} onClick={() => (playing ? stop() : void play())}>
-              {preparing || !ready ? '…' : playing ? '■' : '▶'}
-            </button>
-            <button onClick={() => setTempoPercent(Math.max(25, tempoPercent - 10))}>−</button>
+            <IconButton iconOnly class="primary big" disabled={noteCount === 0 || preparing || !ready}
+              icon={preparing || !ready ? 'sync' : playing ? 'stop' : 'play'}
+              label={preparing || !ready ? 'Wird vorbereitet …' : playing ? 'Stopp' : 'Abspielen'}
+              onClick={() => (playing ? stop() : void play())} />
+            <IconButton iconOnly icon="minus" label="Langsamer" onClick={() => setTempoPercent(Math.max(25, tempoPercent - 10))} />
             <span class="value" title={`♩ = ${bpm}`}>{tempoPercent} %</span>
-            <button onClick={() => setTempoPercent(Math.min(200, tempoPercent + 10))}>+</button>
+            <IconButton iconOnly icon="plus" label="Schneller" onClick={() => setTempoPercent(Math.min(200, tempoPercent + 10))} />
             {startTick > 0
-              ? <button class="start-chip" onClick={() => setStartTick(0)} title="Wieder vom Anfang">ab Takt {startMeasure} ✕</button>
+              ? <button class="start-chip ib" onClick={() => setStartTick(0)} title="Wieder vom Anfang"><span class="wide">ab Takt</span><span class="narrow">T.</span> {startMeasure}<Icon name="close" /></button>
               : <span class="muted small hint">Startstelle: Note antippen</span>}
           </>
         ) : (
           <>
-            <button class="primary big" onClick={() => setScrolling(!scrolling)}>{scrolling ? '❚❚' : '▶'}</button>
-            <button onClick={() => savePiece({ ...piece, scrollBpm: Math.max(10, scrollBpm - 4) })}>−</button>
+            <IconButton iconOnly class="primary big" icon={scrolling ? 'pause' : 'play'} label={scrolling ? 'Anhalten' : 'Scrollen starten'} onClick={() => setScrolling(!scrolling)} />
+            <IconButton iconOnly icon="minus" label="Langsamer" onClick={() => savePiece({ ...piece, scrollBpm: Math.max(10, scrollBpm - 4) })} />
             <span class="value" title="Scrollgeschwindigkeit als Tempo">♩ = {scrollBpm}</span>
-            <button onClick={() => savePiece({ ...piece, scrollBpm: Math.min(300, scrollBpm + 4) })}>+</button>
-            <button onClick={() => { container.current?.scrollTo({ top: 0 }); }} title="Zum Anfang">⤒</button>
+            <IconButton iconOnly icon="plus" label="Schneller" onClick={() => savePiece({ ...piece, scrollBpm: Math.min(300, scrollBpm + 4) })} />
+            <IconButton iconOnly icon="top" label="Zum Anfang" onClick={() => { container.current?.scrollTo({ top: 0 }); }} />
           </>
         )}
         <span class="spacer" />
-        <button class={panel ? 'on' : ''} onClick={() => setPanel(!panel)} aria-label="Einstellungen">⚙</button>
+        <IconButton iconOnly class={panel ? 'on' : ''} icon="settings" label="Einstellungen" onClick={() => setPanel(!panel)} />
       </footer>
 
       {editing && (
