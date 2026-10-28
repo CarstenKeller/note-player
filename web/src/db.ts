@@ -69,6 +69,8 @@ export interface Recognized {
   json: string;
   /** Text recognized on the page (for chord names), once it was needed. */
   ocr?: TextPiece[];
+  /** What [ocr] contains: absent = chord names only; 2 = also the numbers in tablatures. */
+  ocrVersion?: number;
 }
 
 const DB_NAME = 'notenspieler';

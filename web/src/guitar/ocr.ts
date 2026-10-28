@@ -43,14 +43,25 @@ export async function recognizeText(image: Blob): Promise<TextPiece[]> {
 /** Letters, signs and digits of chord names. */
 const CHORD_CHARS = 'ABCDEFGHabcdefghmMajsu#b0123456789()/+-°ø';
 
+/** Digits of fret numbers in tablatures. */
+export const FRET_CHARS = '0123456789';
+
+export interface Strip {
+  top: number;
+  bottom: number;
+  /** Lines to paint over before reading (the lines of a tablature). */
+  lines?: number[];
+}
+
 /**
- * Chord names in strips of a page (the strips above the staves, where chord names stand). The
+ * Chord names (or with [chars] = FRET_CHARS fret numbers) in strips of a page (the strips above the staves, where chord names stand). The
  * strips are enlarged and read with only the characters of chord names, which reads them much
  * better between notes and chord diagrams than reading the whole page.
  */
-export async function recognizeStrips(image: Blob, strips: { top: number; bottom: number }[], letterHeight: number): Promise<TextPiece[]> {
+export async function recognizeStrips(image: Blob, strips: Strip[], letterHeight: number, chars = CHORD_CHARS): Promise<TextPiece[]> {
   const w = await worker();
-  await w.setParameters({ tessedit_char_whitelist: CHORD_CHARS, tessedit_pageseg_mode: '6' as never });
+  // fret numbers stand scattered on the tablature: 'sparse text'
+  await w.setParameters({ tessedit_char_whitelist: chars, tessedit_pageseg_mode: (chars === FRET_CHARS ? '11' : '6') as never });
   const bitmap = await createImageBitmap(image);
   const pieces: TextPiece[] = [];
   try {
@@ -65,6 +76,7 @@ export async function recognizeStrips(image: Blob, strips: { top: number; bottom
       canvas.height = Math.round(height * scale);
       const ctx = canvas.getContext('2d')!;
       ctx.drawImage(bitmap, 0, top, bitmap.width, height, 0, 0, canvas.width, canvas.height);
+      if (s.lines?.length) removeLines(ctx, s.lines.map((y) => (y - top) * scale), letterHeight * scale);
       const blob = await new Promise<Blob>((resolve, reject) => canvas.toBlob((b) => (b ? resolve(b) : reject(new Error('strip'))), 'image/png'));
       canvas.width = canvas.height = 0;
       const { data } = await w.recognize(blob, {}, { blocks: true, text: false });
@@ -74,6 +86,32 @@ export async function recognizeStrips(image: Blob, strips: { top: number; bottom
     bitmap.close();
   }
   return pieces;
+}
+
+/**
+ * Paints over the lines of a tablature (at the heights [ys]): the long dark runs in the rows
+ * around each line. The numbers on a line are short runs and stay.
+ */
+function removeLines(ctx: CanvasRenderingContext2D, ys: number[], letterHeight: number): void {
+  const { width, height } = ctx.canvas;
+  const img = ctx.getImageData(0, 0, width, height);
+  const d = img.data;
+  const dark = (i: number) => d[i] + d[i + 1] + d[i + 2] < 3 * 160;
+  const minRun = Math.max(4, 1.2 * letterHeight);
+  const reach = Math.max(2, Math.round(letterHeight / 8));
+  for (const y of ys) {
+    for (let row = Math.max(0, Math.round(y) - reach); row <= Math.min(height - 1, Math.round(y) + reach); row++) {
+      let x = 0;
+      while (x < width) {
+        if (!dark((row * width + x) * 4)) { x++; continue; }
+        let end = x;
+        while (end < width && dark((row * width + end) * 4)) end++;
+        if (end - x >= minRun) for (let k = x; k < end; k++) d.fill(255, (row * width + k) * 4, (row * width + k) * 4 + 3);
+        x = end;
+      }
+    }
+  }
+  ctx.putImageData(img, 0, 0);
 }
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -89,7 +127,7 @@ function piecesOf(data: any, top: number, scale: number): TextPiece[] {
           if (!text) continue;
           const symbols = word.symbols?.filter((s) => s.text.length === 1);
           const chars = symbols && symbols.length === text.length ? symbols.map((s) => ({ x0: X(s.bbox.x0), x1: X(s.bbox.x1) })) : undefined;
-          pieces.push({ str: text, x0: X(word.bbox.x0), y0: Y(word.bbox.y0), x1: X(word.bbox.x1), y1: Y(word.bbox.y1), chars });
+          pieces.push({ str: text, x0: X(word.bbox.x0), y0: Y(word.bbox.y0), x1: X(word.bbox.x1), y1: Y(word.bbox.y1), chars, ocr: true });
         }
       }
     }

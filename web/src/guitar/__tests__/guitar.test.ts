@@ -2,6 +2,8 @@ import { describe, expect, it } from 'vitest';
 import { parseChord, voicing } from '../chords';
 import { analyzeSheet, strums } from '../analyze';
 import { linesFromPieces, linesFromPlain } from '../text';
+import { readTabStaves, readTuning } from '../tabs';
+import { STRINGS } from '../chords';
 
 const N = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B'];
 const name = (p: number) => N[p % 12] + (Math.floor(p / 12) - 1);
@@ -96,5 +98,44 @@ describe('tempo map', () => {
     expect(t.tick(3)).toBeCloseTo(1920);
     expect(t.tick(1)).toBeCloseTo(480);
     expect(t.scaled(2).seconds(1920)).toBeCloseTo(1.5);
+  });
+});
+
+describe('tablature under notes', () => {
+  // a staff of notes (staff 1) above a tablature, a vocal staff (0) above that
+  const box = (x: number): [number, number, number, number] => [x - 5, 140, x + 5, 160];
+  const ev = (staff: number, x: number, start: number, pitches: number[]) =>
+    ({ start, duration: 480, pitches, holds: [], box: box(x), staff, system: 0, measure: 0 });
+  const staff = (index: number, top: number) => ({ index, system: 0, box: [0, top, 1000, top + 40] as [number, number, number, number], clef: 'TREBLE' as const, key: 0, vocal: index === 0 });
+  const score = {
+    tpq: 480,
+    staves: [staff(0, 0), staff(1, 100)],
+    systems: [],
+    events: [ev(0, 200, 0, [72]), ev(1, 200, 0, [64]), ev(1, 300, 480, [67, 71])],
+  };
+  // lines 15 apart from y 200; the box reaches 0.7 spacings beyond the outer lines
+  const tab: [number, number, number, number] = [-10, 200 - 10.5, 1010, 275 + 10.5];
+  const digit = (str: string, x: number, line: number) => ({ str, x0: x - 3, x1: x + 3, y0: 200 + 15 * line - 5, y1: 200 + 15 * line + 5 });
+
+  it('reads string and fret, with the rhythm of the notes above', () => {
+    const r = readTabStaves([digit('2', 200, 3), digit('0', 300, 2), digit('0', 300, 1), digit('(3)', 400, 0)], [tab], score, 10, STRINGS);
+    expect(r.guitarStaves).toEqual([1]);
+    expect(r.covered.map((e) => e.start)).toEqual([0, 480]);
+    // D string fret 2 = E3; G and B string open
+    expect(r.notes.map((n) => `${n.pitches.map(name).join('+')}@${n.start}`)).toEqual(['E3@0', 'G3+B3@480']);
+  });
+
+  it('takes numbers from text recognition only when they agree with the note above', () => {
+    const ocr = (d: ReturnType<typeof digit>) => ({ ...d, ocr: true });
+    // E3 above "2" on the D string agrees; "8" for "0" on the G string does not (D#4 is no G)
+    const r = readTabStaves([ocr(digit('2', 200, 3)), ocr(digit('8', 300, 2))], [tab], score, 10, STRINGS);
+    expect(r.notes.map((n) => n.pitches.map(name).join('+'))).toEqual(['E3']);
+    expect(r.covered.map((e) => e.start)).toEqual([0]);
+  });
+
+  it('reads the tuning written on the sheet', () => {
+    expect(readTuning(plain('Tuning (low to high): C G D G B♭ D'))?.map(name)).toEqual(['C2', 'G2', 'D3', 'G3', 'A#3', 'D4']);
+    expect(readTuning(plain('Drop D tuning'))?.map(name)).toEqual(['D2', 'A2', 'D3', 'G3', 'B3', 'E4']);
+    expect(readTuning(plain('Moderately'))).toBeNull();
   });
 });

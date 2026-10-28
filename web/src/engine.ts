@@ -8,6 +8,9 @@ import type { TextPiece } from './guitar/text';
 /** Version of the recognition; results of another version are recognized again. */
 export const ENGINE = __ENGINE__;
 
+/** Version of the text recognition (see Recognized.ocrVersion). */
+const OCR_VERSION = 2;
+
 let worker: Worker | null = null;
 let nextId = 1;
 const pending = new Map<number, (r: Response) => void>();
@@ -106,9 +109,10 @@ export async function sheetText(sheetId: string, page: ShownSheet, allowOcr = tr
   }
   const rec = await db.result(sheetId);
   if (!rec) return [];
-  if (rec.ocr) return rec.ocr;
-  if (!allowOcr) return [];
-  const { recognizeText, recognizeStrips } = await import('./guitar/ocr');
+  const tabs = page.result.tabs ?? [];
+  if (rec.ocr && (rec.ocrVersion === OCR_VERSION || tabs.length === 0)) return rec.ocr;
+  if (!allowOcr) return rec.ocr ?? [];
+  const { recognizeText, recognizeStrips, FRET_CHARS } = await import('./guitar/ocr');
   // with staves: only the strips above the systems (chord names); else the whole page
   const systems = page.result.score.systems;
   const ss = page.result.staffSpace;
@@ -118,6 +122,13 @@ export async function sheetText(sheetId: string, page: ShownSheet, allowOcr = tr
       bottom: s.box[1] - 0.2 * ss,
     })), 1.5 * ss)
     : await recognizeText(rec.page);
-  await db.saveResult({ ...rec, ocr });
+  // the fret numbers in the tablatures (the box reaches 0.7 line spacings beyond the lines)
+  for (const t of tabs) {
+    const spacing = (t[3] - t[1]) / 6.4;
+    const lines = [0, 1, 2, 3, 4, 5].map((k) => t[1] + (0.7 + k) * spacing);
+    ocr.push(...(await recognizeStrips(rec.page, [{ top: t[1], bottom: t[3], lines }], 0.9 * spacing, FRET_CHARS))
+      .filter((p) => p.x1 > t[0] && p.x0 < t[2]));
+  }
+  await db.saveResult({ ...rec, ocr, ocrVersion: OCR_VERSION });
   return ocr;
 }

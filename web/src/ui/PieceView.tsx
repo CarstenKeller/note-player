@@ -5,7 +5,9 @@ import { importFiles, textSheet } from '../importer';
 import { GUITAR, INSTRUMENTS, Player } from '../audio';
 import { joinSheets, secondsOf, TempoMap, type Box, type EventJ, type ExtraEvent, type PieceEvent, type PieceScore, type SheetPart } from '../score';
 import { analyzeSheet, readMarks, strums, type GuitarSheet, type StrumPattern } from '../guitar/analyze';
-import { linesFromPieces, type TextLine } from '../guitar/text';
+import { linesFromPieces, type TextLine, type TextPiece } from '../guitar/text';
+import { readTabStaves, readTuning, type TabRead } from '../guitar/tabs';
+import { STRINGS } from '../guitar/chords';
 import { keepAwake } from '../wakelock';
 import { download } from '../backup';
 import { PieceDialog } from './PieceDialog';
@@ -35,7 +37,8 @@ export function PieceView(props: { piece: Piece; allCategories: string[]; allArt
   const [sheets, setSheets] = useState<SheetState[]>(props.piece.sheets.map((id) => ({ id })));
   const [working, setWorking] = useState<string | null>(null);
   /** Guitar: the text on each sheet (chord names, text tabs) by sheet id; absent = not read yet. */
-  const [texts, setTexts] = useState<Record<string, TextLine[]>>({});
+  /** The text of each sheet: as read (with positions) and grouped in lines. */
+  const [texts, setTexts] = useState<Record<string, { pieces: TextPiece[]; lines: TextLine[] }>>({});
   const [reading, setReading] = useState<string | null>(null);
   const [mode, setMode] = useState<Mode>('play');
 
@@ -70,7 +73,7 @@ export function PieceView(props: { piece: Piece; allCategories: string[]; allArt
 
   /** Tempo marks and capo of each sheet. */
   const marks = useMemo(() => sheets.map((s) => {
-    const lines = texts[textKey(s.id)];
+    const lines = texts[textKey(s.id)]?.lines;
     return s.shown && lines ? readMarks(lines, s.shown.result.score, s.shown.result.staffSpace) : null;
   }), [sheets, texts, guitar]);
   /** The first tempo mark of the piece; the base tempo when none was set by hand. */
@@ -141,11 +144,11 @@ export function PieceView(props: { piece: Piece; allCategories: string[]; allArt
     if (guitar) setReading(sheets.length > 1 ? `Akkorde und Tabs werden gelesen (Blatt ${todo + 1}) …` : 'Akkorde und Tabs werden gelesen …');
     const key = textKey(s.id);
     sheetText(s.id, s.shown!, guitar)
-      .then((pieces) => linesFromPieces(pieces))
-      .catch(() => [] as TextLine[])
-      .then((lines) => {
+      .then((pieces) => ({ pieces, lines: linesFromPieces(pieces) }))
+      .catch(() => ({ pieces: [], lines: [] }))
+      .then((text) => {
         if (cancelled) return;
-        setTexts((all) => ({ ...all, [key]: lines }));
+        setTexts((all) => ({ ...all, [key]: text }));
       });
     return () => {
       cancelled = true;
@@ -154,11 +157,23 @@ export function PieceView(props: { piece: Piece; allCategories: string[]; allArt
 
   /** The guitar part of each sheet (chords, text tabs). */
   const guitarSheets: (GuitarSheet | null)[] = useMemo(() => sheets.map((s) => {
-    const lines = texts[textKey(s.id)];
+    const lines = texts[textKey(s.id)]?.lines;
     if (!guitar || !s.shown || !lines) return null;
     const r = s.shown.result;
     return analyzeSheet(lines, includeVocals ? r.score : r.withoutVocals, r.staffSpace, { beatsPerChord: gs.beatsPerChord });
   }), [guitar, sheets, texts, includeVocals, gs.beatsPerChord]);
+
+  /**
+   * The tablatures of each sheet: the fret numbers on them (with the tuning written on the
+   * sheet) and which staves of notes belong to the guitar.
+   */
+  const tabReads: (TabRead | null)[] = useMemo(() => sheets.map((s) => {
+    const text = texts[textKey(s.id)];
+    const r = s.shown?.result;
+    if (!guitar || !r || !text || !(r.tabs?.length)) return null;
+    const tuning = readTuning(text.lines) ?? STRINGS;
+    return readTabStaves(text.pieces, r.tabs, r.score, r.staffSpace, tuning, capo ?? 0);
+  }), [guitar, sheets, texts, capo]);
 
   /** A guitar part written out with tablature: the chord names are only for orientation. */
   const hasTabs = sheets.some((s) => (s.shown?.result.tabs?.length ?? 0) > 0);
@@ -179,10 +194,22 @@ export function PieceView(props: { piece: Piece; allCategories: string[]; allArt
       for (const c of g.chords) for (const st of strums(c, gs.strum)) extra.push({ ...st, pitches: up(st.pitches), box: c.box, kind: 'chord' });
     }
     if (g && gs.melody) for (const t of g.tabNotes) extra.push({ start: t.start, duration: t.duration, pitches: up(t.pitches), box: t.box, strum: 0, kind: 'tab' });
+    const tr = tabReads[i];
+    if (tr && tr.guitarStaves.length > 0) {
+      // the guitar part only (not the singing or other instruments): from the tablature, or
+      // from the notes above it where its numbers could not be read (an octave lower: guitar
+      // music is written an octave higher than it sounds)
+      if (gs.melody) for (const t of tr.notes) extra.push({ start: t.start, duration: t.duration, pitches: up(t.pitches), box: t.box, strum: 0, kind: 'tab' });
+      const guitarNotes = {
+        ...r.score,
+        events: r.score.events.filter((e) => e.pitches.length === 0 || (tr.guitarStaves.includes(e.staff) && !tr.covered.includes(e))),
+      };
+      return { score: guitarNotes, notes: gs.melody, transpose: -12 + capoShift, extra, length: g?.length, tempos };
+    }
     // guitar music is written an octave higher than it sounds (a staff above a tablature)
     const octave = (r.tabs?.length ?? 0) > 0 ? -12 : 0;
     return { score: notes, notes: gs.melody, transpose: octave + capoShift, extra, length: g?.length, tempos };
-  })), [sheets, includeVocals, guitar, guitarSheets, chordsOn, gs.melody, gs.strum, capoShift, marks]);
+  })), [sheets, includeVocals, guitar, guitarSheets, tabReads, chordsOn, gs.melody, gs.strum, capoShift, marks]);
 
   /** The tempo: from the marks on the sheet (scaled by the base tempo and %), else constant. */
   const tempo = useMemo(() => {
@@ -194,7 +221,7 @@ export function PieceView(props: { piece: Piece; allCategories: string[]; allArt
   /** Notes on staves (not the strokes of chords or text tabs). */
   const staffNotes = sheets.reduce((n, s) => n + (s.shown ? (includeVocals ? s.shown.result.score : s.shown.result.withoutVocals).events.filter((e) => e.pitches.length > 0).length : 0), 0);
   const chordCount = guitarSheets.reduce((n, g) => n + (g?.chords.length ?? 0), 0);
-  const tabCount = guitarSheets.reduce((n, g) => n + (g?.tabNotes.length ?? 0), 0);
+  const tabCount = guitarSheets.reduce((n, g) => n + (g?.tabNotes.length ?? 0), 0) + tabReads.reduce((n, t) => n + (t?.notes.length ?? 0), 0);
   const hasVocals = sheets.some((s) => s.shown?.result.score.staves.some((st) => st.vocal));
   const warnings = sheets.flatMap((s, i) => [
     ...(s.shown?.result.warnings ?? [])
@@ -537,9 +564,10 @@ export function PieceView(props: { piece: Piece; allCategories: string[]; allArt
       return [
         ...s.shown.result.score.events,
         ...(g ? [...g.chords.map((c) => ({ ...none, box: c.box })), ...g.tabNotes.map((t) => ({ ...none, box: t.box }))] : []),
+        ...(tabReads[i]?.notes.map((t) => ({ ...none, box: t.box })) ?? []),
       ];
     }),
-    [outline, sheets, mode, guitarSheets],
+    [outline, sheets, mode, guitarSheets, tabReads],
   );
 
   const mark = (e: EventJ, shown: ShownSheet, cls: string, k: number | string) => {

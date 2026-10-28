@@ -1279,10 +1279,20 @@ object Omr {
         val halves = halfLike.firstOrNull()?.takeIf { it.x0 < cursor + 2.0 * d }
             ?.let { first -> halfLike.filter { it.x0 <= first.x1 + 1.2 * d } } ?: emptyList()
         val brokenC = halves.size == 2 && (halves.maxOf { it.x1 } - halves.minOf { it.x0 }).toDouble() in (1.0 * d)..(2.4 * d)
+        // or only its thick left half is whole, the tips of its right half are small pieces
+        val leftHalf = halves.singleOrNull()?.takeIf { it.width >= 0.35 * d }
+        val tips = leftHalf?.let { h ->
+            own.filter {
+                !holdsNote(it) && it.x0 > h.x0 + 0.3 * d && it.x0 < h.x1 + 1.2 * d && it.height < 1.2 * d &&
+                    (abs(it.cy - h.y0) < 0.5 * d || abs(it.cy - h.y1) < 0.5 * d)
+            }
+        } ?: emptyList()
         if ((hasUpper && hasLower) || common) {
             for (c in digits) { cursor = max(cursor, c.x1.toDouble()); used[c.id] = true }
         } else if (brokenC) {
             for (c in halves) { cursor = max(cursor, c.x1.toDouble()); used[c.id] = true }
+        } else if (leftHalf != null && tips.isNotEmpty()) {
+            for (c in tips + leftHalf) { cursor = max(cursor, c.x1.toDouble()); used[c.id] = true }
         } else {
             // both digits merged into one glyph
             val stacked = own.firstOrNull {

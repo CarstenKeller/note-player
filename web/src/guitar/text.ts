@@ -32,6 +32,8 @@ export interface TextPiece {
   y1: number;
   /** Box of each character, if known (else spread evenly over the piece). */
   chars?: { x0: number; x1: number }[];
+  /** Read by text recognition (not exact). */
+  ocr?: boolean;
 }
 
 /**
