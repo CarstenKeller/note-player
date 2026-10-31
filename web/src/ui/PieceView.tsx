@@ -554,7 +554,10 @@ export function PieceView(props: { piece: Piece; allCategories: string[]; allArt
 
   const saveOriginal = async (i: number) => {
     const s = await db.sheet(piece.sheets[i]);
-    if (s) download(s.blob, s.name);
+    // a page of an imported PDF: the PDF file (if it was kept)
+    const o = s?.source && (await db.original(s.source.original));
+    if (o) download(o.blob, o.name);
+    else if (s) download(s.blob, s.name);
   };
 
   // --- what is lit up ---------------------------------------------------------------------

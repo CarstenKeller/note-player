@@ -54,6 +54,19 @@ export interface Sheet {
   h?: number;
   /** Text on the sheet with positions in the picture (PDF text layer or pasted text). */
   text?: TextPiece[];
+  /** The page of an imported PDF this sheet is (number from 1), kept in the original file. */
+  source?: { original: string; page: number };
+}
+
+/** An imported PDF file as it was, kept for saving the piece as PDF again. */
+export interface Original {
+  id: string;
+  blob: Blob;
+  name: string;
+  /** Number of pages of the file. */
+  pages: number;
+  /** The sheets made from its pages; the file is deleted with the last of them. */
+  sheets: string[];
 }
 
 /** The recognition of a sheet, kept so that a piece opens quickly the next time. */
@@ -74,7 +87,7 @@ export interface Recognized {
 }
 
 const DB_NAME = 'notenspieler';
-const STORES = ['pieces', 'sheets', 'results', 'settings'] as const;
+const STORES = ['pieces', 'sheets', 'results', 'settings', 'originals'] as const;
 type Store = (typeof STORES)[number];
 
 let dbPromise: Promise<IDBDatabase> | null = null;
@@ -82,12 +95,17 @@ let dbPromise: Promise<IDBDatabase> | null = null;
 function open(): Promise<IDBDatabase> {
   if (!dbPromise) {
     dbPromise = new Promise((resolve, reject) => {
-      const req = indexedDB.open(DB_NAME, 1);
+      // version 2: the store of original PDF files
+      const req = indexedDB.open(DB_NAME, 2);
       req.onupgradeneeded = () => {
         const db = req.result;
         for (const s of STORES) if (!db.objectStoreNames.contains(s)) db.createObjectStore(s, { keyPath: s === 'settings' ? 'key' : 'id' });
       };
-      req.onsuccess = () => resolve(req.result);
+      req.onsuccess = () => {
+        // a newer app in another tab needs the database: let it go
+        req.result.onversionchange = () => req.result.close();
+        resolve(req.result);
+      };
       req.onerror = () => reject(req.error);
     });
   }
@@ -148,10 +166,7 @@ export const db = {
     if (!old || essentials(old) !== essentials(p)) significantChange();
   },
   async deletePiece(p: Piece): Promise<void> {
-    for (const s of p.sheets) {
-      await del('sheets', s);
-      await del('results', s);
-    }
+    for (const s of p.sheets) await db.deleteSheet(s);
     await del('pieces', p.id);
     significantChange();
   },
@@ -159,9 +174,20 @@ export const db = {
   sheet: (id: string) => get<Sheet>('sheets', id),
   saveSheet: (s: Sheet) => put('sheets', s),
   async deleteSheet(id: string): Promise<void> {
+    const source = (await get<Sheet>('sheets', id))?.source;
     await del('sheets', id);
     await del('results', id);
+    // the original file goes with the last sheet made from it
+    const original = source && (await get<Original>('originals', source.original));
+    if (original) {
+      const sheets = original.sheets.filter((s) => s !== id);
+      if (sheets.length > 0) await put('originals', { ...original, sheets });
+      else await del('originals', original.id);
+    }
   },
+
+  original: (id: string) => get<Original>('originals', id),
+  saveOriginal: (o: Original) => put('originals', o),
 
   result: (id: string) => get<Recognized>('results', id),
   saveResult: (r: Recognized) => put('results', r),

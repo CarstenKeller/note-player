@@ -2,19 +2,25 @@
 // another device or to keep them safe outside the browser.
 
 import { unzipSync, zipSync, strToU8, strFromU8 } from 'fflate';
-import { db, type Piece } from './db';
+import { db, type Original, type Piece, type Sheet } from './db';
+
+/** A sheet in the backup: its picture is the file at [path]. */
+type SheetEntry = { id: string; name: string; type: string; path: string } & Pick<Sheet, 'kind' | 'w' | 'h' | 'text' | 'source'>;
 
 interface Manifest {
   app: 'notenspieler';
   version: 1;
-  pieces: (Piece & { files: { id: string; name: string; type: string; path: string }[] })[];
+  pieces: (Piece & { files: SheetEntry[] })[];
+  /** The imported PDF files (not in backups of older versions). */
+  originals?: (Omit<Original, 'blob'> & { path: string })[];
 }
 
 const extOf = (type: string) => (type === 'image/png' ? 'png' : type === 'image/heic' ? 'heic' : 'jpg');
 
 export async function exportAll(): Promise<Blob> {
   const files: Record<string, Uint8Array> = {};
-  const manifest: Manifest = { app: 'notenspieler', version: 1, pieces: [] };
+  const manifest: Manifest = { app: 'notenspieler', version: 1, pieces: [], originals: [] };
+  const originals = new Set<string>();
   for (const p of await db.pieces()) {
     const entry = { ...p, files: [] as Manifest['pieces'][number]['files'] };
     for (const id of p.sheets) {
@@ -22,7 +28,16 @@ export async function exportAll(): Promise<Blob> {
       if (!s) continue;
       const path = `blaetter/${id}.${extOf(s.blob.type)}`;
       files[path] = new Uint8Array(await s.blob.arrayBuffer());
-      entry.files.push({ id, name: s.name, type: s.blob.type, path });
+      entry.files.push({ id, name: s.name, type: s.blob.type, path, kind: s.kind, w: s.w, h: s.h, text: s.text, source: s.source });
+      if (s.source && !originals.has(s.source.original)) {
+        originals.add(s.source.original);
+        const o = await db.original(s.source.original);
+        if (o) {
+          const opath = `originale/${o.id}.pdf`;
+          files[opath] = new Uint8Array(await o.blob.arrayBuffer());
+          manifest.originals!.push({ id: o.id, name: o.name, pages: o.pages, sheets: o.sheets, path: opath });
+        }
+      }
     }
     manifest.pieces.push(entry);
   }
@@ -39,12 +54,24 @@ export async function importAll(file: File): Promise<number> {
   const manifest = JSON.parse(strFromU8(raw)) as Manifest;
   const existing = new Set((await db.pieces()).map((p) => p.id));
   let added = 0;
+  const restored = new Set<string>();
   for (const entry of manifest.pieces) {
     if (existing.has(entry.id)) continue;
     const { files: list, ...piece } = entry;
     for (const f of list) {
       const data = files[f.path];
-      if (data) await db.saveSheet({ id: f.id, name: f.name, blob: new Blob([data], { type: f.type }) });
+      if (!data) continue;
+      // the original PDF of the sheet, once
+      const o = f.source && manifest.originals?.find((x) => x.id === f.source!.original);
+      const odata = o && files[o.path];
+      if (o && odata && !restored.has(o.id)) {
+        restored.add(o.id);
+        await db.saveOriginal({ id: o.id, name: o.name, pages: o.pages, sheets: o.sheets, blob: new Blob([odata], { type: 'application/pdf' }) });
+      }
+      await db.saveSheet({
+        id: f.id, name: f.name, blob: new Blob([data], { type: f.type }),
+        kind: f.kind, w: f.w, h: f.h, text: f.text, source: odata ? f.source : undefined,
+      });
     }
     await db.savePiece({ ...piece, sheets: list.filter((f) => files[f.path]).map((f) => f.id) });
     added++;

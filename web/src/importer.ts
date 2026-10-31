@@ -1,6 +1,6 @@
 // Turns chosen files (photos, pictures, PDFs) into sheets. Each page of a PDF becomes a sheet.
 
-import { db, newId, type Sheet } from './db';
+import { db, newId, type Original, type Sheet } from './db';
 import type { TextPiece } from './guitar/text';
 
 /** Pages of a PDF are drawn so that their short side has about this many pixels. */
@@ -14,7 +14,7 @@ export function baseName(name: string): string {
   return name.replace(/\.[^.]+$/, '').replace(/[_]+/g, ' ').trim();
 }
 
-async function pdfPages(file: File, progress: Progress): Promise<Sheet[]> {
+async function pdfPages(file: File, original: string, progress: Progress): Promise<Sheet[]> {
   progress('PDF wird geöffnet …');
   // loaded only when needed (large)
   const pdfjs = await import('pdfjs-dist/legacy/build/pdf.mjs');
@@ -50,7 +50,7 @@ async function pdfPages(file: File, progress: Progress): Promise<Sheet[]> {
       }
       const blob = await new Promise<Blob>((resolve, reject) =>
         canvas.toBlob((b) => (b ? resolve(b) : reject(new Error('Die PDF-Seite konnte nicht gezeichnet werden.'))), 'image/jpeg', 0.92));
-      sheets.push({ id: newId(), blob, name: `${baseName(file.name)} – Seite ${n}.jpg`, kind: 'pdf', w: canvas.width, h: canvas.height, text });
+      sheets.push({ id: newId(), blob, name: `${baseName(file.name)} – Seite ${n}.jpg`, kind: 'pdf', w: canvas.width, h: canvas.height, text, source: { original, page: n } });
       // free the canvas memory right away (Safari limits the total canvas size)
       canvas.width = canvas.height = 0;
     }
@@ -65,10 +65,19 @@ export async function importFiles(files: File[], progress: Progress): Promise<st
   const ids: string[] = [];
   for (const f of files) {
     let sheets: Sheet[];
-    if (isPdf(f)) sheets = await pdfPages(f, progress);
+    let original: Original | null = null;
+    if (isPdf(f)) {
+      // the file itself is kept too (for saving the piece as PDF again)
+      const blob = new Blob([await f.arrayBuffer()], { type: 'application/pdf' });
+      original = { id: newId(), blob, name: f.name || 'Noten.pdf', pages: 0, sheets: [] };
+      sheets = await pdfPages(f, original.id, progress);
+      original.sheets = sheets.map((s) => s.id);
+      original.pages = sheets.length;
+    }
     else if (f.type.startsWith('video/')) throw new Error('Videos werden in der Web-App noch nicht unterstützt (nur in der Android-App).');
     else if (f.type.startsWith('image/') || f.type === '') sheets = [{ id: newId(), blob: f, name: f.name || 'Foto.jpg' }];
     else throw new Error(`„${f.name}“ ist weder ein Bild noch ein PDF.`);
+    if (original) await db.saveOriginal(original);
     for (const s of sheets) {
       await db.saveSheet(s);
       ids.push(s.id);
