@@ -1,7 +1,9 @@
 import { useState } from 'preact/hooks';
 import type { Piece } from '../db';
+import { download } from '../backup';
+import { pdfName, piecePdf } from '../pdfexport';
 
-/** Name and sections ("Rubriken") of a piece; optionally deleting it. */
+/** Name and sections ("Rubriken") of a piece; saving its sheets as PDF; optionally deleting it. */
 export function PieceDialog(props: {
   piece: Piece;
   allCategories: string[];
@@ -11,6 +13,19 @@ export function PieceDialog(props: {
   onClose: () => void;
 }) {
   const [name, setName] = useState(props.piece.name);
+  const [pdfBusy, setPdfBusy] = useState(false);
+  const [pdfError, setPdfError] = useState<string | null>(null);
+  const savePdf = async () => {
+    setPdfBusy(true);
+    setPdfError(null);
+    try {
+      download(await piecePdf(props.piece), pdfName(props.piece));
+    } catch (e) {
+      setPdfError('PDF nicht möglich: ' + (e as Error).message);
+    } finally {
+      setPdfBusy(false);
+    }
+  };
   const [artist, setArtist] = useState(props.piece.artist ?? '');
   const [chosen, setChosen] = useState<string[]>(props.piece.categories);
   const [known, setKnown] = useState<string[]>(() => [...new Set([...props.allCategories, ...props.piece.categories])].sort(collator.compare));
@@ -55,10 +70,12 @@ export function PieceDialog(props: {
             <button onClick={add} disabled={!fresh.trim()}>Hinzufügen</button>
           </div>
         </div>
+        {pdfError && <div class="error">{pdfError}</div>}
         <div class="actions">
           {props.onDelete && (confirmDelete
             ? <button class="danger" onClick={props.onDelete}>Wirklich löschen?</button>
             : <button class="danger-outline" onClick={() => setConfirmDelete(true)}>Löschen</button>)}
+          <button disabled={pdfBusy} onClick={() => void savePdf()}>{pdfBusy ? 'PDF wird erstellt …' : 'Als PDF sichern'}</button>
           <span class="spacer" />
           <button onClick={props.onClose}>Abbrechen</button>
           <button class="primary" onClick={() => {

@@ -10,6 +10,7 @@ import { readTabStaves, readTuning, type TabRead } from '../guitar/tabs';
 import { STRINGS } from '../guitar/chords';
 import { keepAwake } from '../wakelock';
 import { download } from '../backup';
+import { pdfName, piecePdf } from '../pdfexport';
 import { PieceDialog } from './PieceDialog';
 import { BackupStatus } from './BackupStatus';
 import { TextDialog } from './TextDialog';
@@ -538,6 +539,19 @@ export function PieceView(props: { piece: Piece; allCategories: string[]; allArt
     void changeSheets(next);
   };
 
+  /** All sheets in one PDF file. */
+  const savePdf = async () => {
+    setSheetMenu(false);
+    setWorking('PDF wird erstellt …');
+    try {
+      download(await piecePdf(piece), pdfName(piece));
+    } catch (e) {
+      setError('PDF nicht möglich: ' + (e as Error).message);
+    } finally {
+      setWorking(null);
+    }
+  };
+
   const saveOriginal = async (i: number) => {
     const s = await db.sheet(piece.sheets[i]);
     if (s) download(s.blob, s.name);
@@ -617,6 +631,7 @@ export function PieceView(props: { piece: Piece; allCategories: string[]; allArt
             <IconButton keepLabel icon="camera" label="Blatt fotografieren" onClick={() => camera.current?.click()} />
             <IconButton keepLabel icon="open" label="Bilder / PDF anhängen" onClick={() => files.current?.click()} />
             <IconButton keepLabel icon="text" label="Text anhängen" onClick={() => { setSheetMenu(false); setPasting(true); }} />
+            <IconButton keepLabel icon="pdf" label="Alle Blätter als PDF sichern" onClick={() => void savePdf()} />
           </div>
           {piece.sheets.map((id, i) => (
             <div class="row sheet" key={id}>

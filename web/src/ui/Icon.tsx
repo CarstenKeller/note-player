@@ -28,6 +28,7 @@ const PATHS: Record<string, JSX.Element> = {
   clock: <><circle cx="12" cy="12" r="9" /><path d="M12 7v5l3 3" /></>,
   close: <path d="M6 6l12 12M18 6L6 18" />,
   text: <><path d="M5 5h14M12 5v14" /><path d="M9 19h6" /></>,
+  pdf: <><path d="M14 3H6v18h12V7z" /><path d="M14 3v4h4" /><path d="M12 10v7M9 14l3 3 3-3" /></>,
 };
 
 export type IconName = keyof typeof PATHS;
