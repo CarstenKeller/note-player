@@ -1,4 +1,5 @@
-import { useState } from 'preact/hooks';
+import { useRef, useState } from 'preact/hooks';
+import { resetCover, setOwnCover } from '../covers';
 import type { Piece } from '../db';
 import { download } from '../backup';
 import { pdfName, piecePdf } from '../pdfexport';
@@ -8,8 +9,10 @@ export function PieceDialog(props: {
   piece: Piece;
   allCategories: string[];
   allArtists: string[];
-  onSave: (name: string, artist: string, categories: string[]) => void;
+  onSave: (name: string, artist: string, categories: string[], favorite: boolean) => void;
   onDelete?: () => void;
+  /** The picture of the piece was changed (to show it again). */
+  onCoverChanged?: () => void;
   onClose: () => void;
 }) {
   const [name, setName] = useState(props.piece.name);
@@ -27,6 +30,17 @@ export function PieceDialog(props: {
     }
   };
   const [artist, setArtist] = useState(props.piece.artist ?? '');
+  const [favorite, setFavorite] = useState(props.piece.favorite ?? false);
+  const [coverNote, setCoverNote] = useState<string | null>(null);
+  const coverInput = useRef<HTMLInputElement>(null);
+  const ownCover = async (input: HTMLInputElement) => {
+    const file = input.files?.[0];
+    input.value = '';
+    if (!file) return;
+    await setOwnCover(props.piece, file);
+    setCoverNote('Eigenes Bild gesetzt.');
+    props.onCoverChanged?.();
+  };
   const [chosen, setChosen] = useState<string[]>(props.piece.categories);
   const [known, setKnown] = useState<string[]>(() => [...new Set([...props.allCategories, ...props.piece.categories])].sort(collator.compare));
   const [fresh, setFresh] = useState('');
@@ -56,6 +70,20 @@ export function PieceDialog(props: {
             {props.allArtists.map((a) => <option key={a} value={a} />)}
           </datalist>
         </label>
+        <label class="row">
+          <input type="checkbox" checked={favorite} onChange={(e) => setFavorite(e.currentTarget.checked)} />
+          <span>Favorit</span>
+        </label>
+        <div class="field">
+          Bild
+          <div class="row wrap">
+            <button onClick={() => coverInput.current?.click()}>Eigenes Bild …</button>
+            <button onClick={() => void resetCover(props.piece).then(() => { setCoverNote('Das Bild wird neu gesucht.'); props.onCoverChanged?.(); })}>Neu suchen</button>
+            <button onClick={() => void setOwnCover(props.piece, null).then(() => { setCoverNote('Die Kachel zeigt den Kopf des Notenblatts.'); props.onCoverChanged?.(); })}>Notenblatt zeigen</button>
+          </div>
+          {coverNote && <span class="muted small">{coverNote}</span>}
+          <input ref={coverInput} type="file" accept="image/*" hidden onChange={(e) => void ownCover(e.currentTarget)} />
+        </div>
         <div class="field">
           Rubriken
           <div class="chips">
@@ -81,7 +109,7 @@ export function PieceDialog(props: {
           <button class="primary" onClick={() => {
             // a typed but not yet added section counts too
             const c = fresh.trim();
-            props.onSave(name.trim() || props.piece.name, artist.trim(), c && !chosen.includes(c) ? [...chosen, c] : chosen);
+            props.onSave(name.trim() || props.piece.name, artist.trim(), c && !chosen.includes(c) ? [...chosen, c] : chosen, favorite);
           }}>Speichern</button>
         </div>
       </div>

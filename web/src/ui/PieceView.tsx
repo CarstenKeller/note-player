@@ -815,8 +815,8 @@ export function PieceView(props: { piece: Piece; allCategories: string[]; allArt
           allCategories={props.allCategories}
           allArtists={props.allArtists}
           onClose={() => setEditing(false)}
-          onSave={async (name, artist, categories) => {
-            await savePiece({ ...piece, name, artist: artist || undefined, categories });
+          onSave={async (name, artist, categories, favorite) => {
+            await savePiece({ ...piece, name, artist: artist || undefined, categories, favorite: favorite || undefined });
             setEditing(false);
           }}
         />

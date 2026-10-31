@@ -1,4 +1,5 @@
-// Local storage of the pieces in the browser (IndexedDB). Nothing leaves the device.
+// Local storage of the pieces in the browser (IndexedDB). Nothing leaves the device (only the
+// title and performer are sent to a search for a cover picture, see covers.ts).
 
 import type { TextPiece } from './guitar/text';
 import type { StrumPattern } from './guitar/analyze';
@@ -13,6 +14,8 @@ export interface Piece {
   categories: string[];
   /** Performer / composer ("Interpret"), optional. */
   artist?: string;
+  /** Marked as a favourite. */
+  favorite?: boolean;
   /** Ids of the sheets in playing order. */
   sheets: string[];
   /** Quarter notes per minute at 100 %; remembered per piece. */
@@ -69,6 +72,30 @@ export interface Original {
   sheets: string[];
 }
 
+/** The picture on the tile of a piece. */
+export interface Cover {
+  /** Piece id. */
+  id: string;
+  /**
+   * 'web': found by the search for [query]; 'own': chosen by the user; 'none': the search found
+   * nothing (tried again after some days) or the user wants no picture from the web.
+   */
+  source: 'web' | 'own' | 'none';
+  /** Title and performer the search was made for (searched again when they change). */
+  query: string;
+  /** When it was searched. */
+  time: number;
+  /** The picture (or only its address, when the server does not allow reading it). */
+  blob?: Blob;
+  url?: string;
+  /** Where it was found ("iTunes", "Wikipedia"). */
+  from?: string;
+  /** A small picture of the head of the first sheet (shown without cover). */
+  sheetThumb?: Blob;
+  /** The sheet [sheetThumb] was made of. */
+  sheetId?: string;
+}
+
 /** The recognition of a sheet, kept so that a piece opens quickly the next time. */
 export interface Recognized {
   /** Sheet id. */
@@ -87,7 +114,7 @@ export interface Recognized {
 }
 
 const DB_NAME = 'notenspieler';
-const STORES = ['pieces', 'sheets', 'results', 'settings', 'originals'] as const;
+const STORES = ['pieces', 'sheets', 'results', 'settings', 'originals', 'covers'] as const;
 type Store = (typeof STORES)[number];
 
 let dbPromise: Promise<IDBDatabase> | null = null;
@@ -95,8 +122,8 @@ let dbPromise: Promise<IDBDatabase> | null = null;
 function open(): Promise<IDBDatabase> {
   if (!dbPromise) {
     dbPromise = new Promise((resolve, reject) => {
-      // version 2: the store of original PDF files
-      const req = indexedDB.open(DB_NAME, 2);
+      // version 2: the store of original PDF files; 3: cover pictures
+      const req = indexedDB.open(DB_NAME, 3);
       req.onupgradeneeded = () => {
         const db = req.result;
         for (const s of STORES) if (!db.objectStoreNames.contains(s)) db.createObjectStore(s, { keyPath: s === 'settings' ? 'key' : 'id' });
@@ -149,7 +176,7 @@ function significantChange(): void {
   for (const l of changeListeners) l();
 }
 
-const essentials = (p: Piece) => JSON.stringify([p.name, p.artist ?? '', p.categories, p.sheets, p.instrument ?? 'piano']);
+const essentials = (p: Piece) => JSON.stringify([p.name, p.artist ?? '', p.categories, p.sheets, p.instrument ?? 'piano', p.favorite ?? false]);
 
 export function newId(): string {
   return Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
@@ -168,6 +195,7 @@ export const db = {
   async deletePiece(p: Piece): Promise<void> {
     for (const s of p.sheets) await db.deleteSheet(s);
     await del('pieces', p.id);
+    await del('covers', p.id);
     significantChange();
   },
 
@@ -184,6 +212,12 @@ export const db = {
       if (sheets.length > 0) await put('originals', { ...original, sheets });
       else await del('originals', original.id);
     }
+  },
+
+  cover: (id: string) => get<Cover>('covers', id),
+  saveCover: (c: Cover) => put('covers', c),
+  async covers(): Promise<Cover[]> {
+    return done((await store('covers')).getAll()) as Promise<Cover[]>;
   },
 
   original: (id: string) => get<Original>('originals', id),

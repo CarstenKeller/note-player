@@ -4,6 +4,7 @@ import {
   type BackupState, type ManualMethod,
 } from '../autobackup';
 import { importAll } from '../backup';
+import { db } from '../db';
 import { Icon, IconButton } from './Icon';
 
 const when = (t?: number) =>
@@ -39,6 +40,13 @@ function BackupDialog(props: { state: BackupState; onClose: () => void; onRestor
   const [note, setNote] = useState<string | null>(null);
   const restoreInput = useRef<HTMLInputElement>(null);
   useEffect(() => void manualMethod().then(setMethod), []);
+  const [coverSearch, setCoverSearch] = useState(true);
+  useEffect(() => void db.setting<boolean>('coverSearch').then((v) => v !== undefined && setCoverSearch(v)), []);
+  const chooseCoverSearch = async (on: boolean) => {
+    setCoverSearch(on);
+    await db.saveSetting('coverSearch', on);
+    window.dispatchEvent(new Event('covers-changed'));
+  };
 
   const chooseMethod = (m: ManualMethod) => {
     setMethod(m);
@@ -117,6 +125,18 @@ function BackupDialog(props: { state: BackupState; onClose: () => void; onRestor
             <input ref={restoreInput} type="file" accept=".zip,application/zip" hidden onChange={(e) => void restore(e.currentTarget)} />
           </div>
           {note && <span class="muted">{note}</span>}
+        </div>
+
+        <div class="field">
+          <strong>Bilder der Kacheln</strong>
+          <label class="row">
+            <input type="checkbox" checked={coverSearch} onChange={(e) => void chooseCoverSearch(e.currentTarget.checked)} />
+            <span>
+              Cover-Bilder im Internet suchen: Titel und Interpret werden an die iTunes-Suche von Apple
+              und an Wikipedia geschickt (sonst nichts). Ohne Treffer oder ausgeschaltet zeigt die
+              Kachel den Kopf des Notenblatts.
+            </span>
+          </label>
         </div>
 
         <div class="actions">

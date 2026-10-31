@@ -10,7 +10,7 @@ type SheetEntry = { id: string; name: string; type: string; path: string } & Pic
 interface Manifest {
   app: 'notenspieler';
   version: 1;
-  pieces: (Piece & { files: SheetEntry[] })[];
+  pieces: (Piece & { files: SheetEntry[]; cover?: { path: string; type: string } })[];
   /** The imported PDF files (not in backups of older versions). */
   originals?: (Omit<Original, 'blob'> & { path: string })[];
 }
@@ -22,7 +22,14 @@ export async function exportAll(): Promise<Blob> {
   const manifest: Manifest = { app: 'notenspieler', version: 1, pieces: [], originals: [] };
   const originals = new Set<string>();
   for (const p of await db.pieces()) {
-    const entry = { ...p, files: [] as Manifest['pieces'][number]['files'] };
+    const entry: Manifest['pieces'][number] = { ...p, files: [] };
+    // a picture chosen for the tile (found ones are searched again)
+    const cover = await db.cover(p.id);
+    if (cover?.source === 'own' && cover.blob) {
+      const path = `bilder/${p.id}.${extOf(cover.blob.type)}`;
+      files[path] = new Uint8Array(await cover.blob.arrayBuffer());
+      entry.cover = { path, type: cover.blob.type };
+    }
     for (const id of p.sheets) {
       const s = await db.sheet(id);
       if (!s) continue;
@@ -57,7 +64,11 @@ export async function importAll(file: File): Promise<number> {
   const restored = new Set<string>();
   for (const entry of manifest.pieces) {
     if (existing.has(entry.id)) continue;
-    const { files: list, ...piece } = entry;
+    const { files: list, cover, ...piece } = entry;
+    const coverData = cover && files[cover.path];
+    if (cover && coverData) {
+      await db.saveCover({ id: piece.id, source: 'own', query: '', time: Date.now(), blob: new Blob([coverData], { type: cover.type }) });
+    }
     for (const f of list) {
       const data = files[f.path];
       if (!data) continue;

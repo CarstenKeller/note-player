@@ -28,6 +28,11 @@ const PATHS: Record<string, JSX.Element> = {
   clock: <><circle cx="12" cy="12" r="9" /><path d="M12 7v5l3 3" /></>,
   close: <path d="M6 6l12 12M18 6L6 18" />,
   text: <><path d="M5 5h14M12 5v14" /><path d="M9 19h6" /></>,
+  star: <path d="M12 3.5l2.6 5.4 5.9.8-4.3 4.1 1 5.9-5.2-2.8-5.2 2.8 1-5.9-4.3-4.1 5.9-.8z" />,
+  starOn: <path d="M12 3.5l2.6 5.4 5.9.8-4.3 4.1 1 5.9-5.2-2.8-5.2 2.8 1-5.9-4.3-4.1 5.9-.8z" class="filled" />,
+  tiles: <><rect x="4" y="4" width="7" height="7" rx="1" /><rect x="13" y="4" width="7" height="7" rx="1" /><rect x="4" y="13" width="7" height="7" rx="1" /><rect x="13" y="13" width="7" height="7" rx="1" /></>,
+  list: <path d="M4 6h16M4 12h16M4 18h16" />,
+  folder: <path d="M3 6h6l2 2h10v11H3z" />,
   pdf: <><path d="M14 3H6v18h12V7z" /><path d="M14 3v4h4" /><path d="M12 10v7M9 14l3 3 3-3" /></>,
 };
 

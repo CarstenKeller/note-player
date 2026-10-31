@@ -84,8 +84,10 @@ input[type='checkbox'] { width: 24px; height: 24px; }
 .categories { padding: 0 12px 8px; }
 .chip { min-height: 36px; border-radius: 18px; padding: 0 14px; font-size: 15px; }
 .chip.on { background: var(--accent); color: var(--accent-ink); border-color: var(--accent); }
-.pieces { list-style: none; margin: 0; padding: 0 12px; overflow-y: auto; flex: 1; -webkit-overflow-scrolling: touch; }
-.pieces li {
+.pieces { padding: 0 12px 12px; overflow-y: auto; flex: 1; -webkit-overflow-scrolling: touch; }
+.pieces ul { list-style: none; margin: 0; padding: 0; }
+.pieces .group { font-size: 17px; margin: 14px 0 8px; }
+.rows li {
   display: flex;
   align-items: center;
   gap: 8px;
@@ -97,6 +99,49 @@ input[type='checkbox'] { width: 24px; height: 24px; }
   cursor: pointer;
 }
 .pieces .info { flex: 1; min-width: 0; }
+.rows .fav.on .ic, .tiles .fav.on .ic { color: #d99a0b; }
+
+/* tiles: a picture (cover, or the head of the first sheet), title and performer */
+.tiles { display: grid; grid-template-columns: repeat(auto-fill, minmax(160px, 1fr)); gap: 12px; }
+.tiles li {
+  display: flex;
+  flex-direction: column;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  overflow: hidden;
+  cursor: pointer;
+  min-width: 0;
+}
+.tiles .cover { position: relative; aspect-ratio: 1; background: #e9e4da; }
+.tiles .cover img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.tiles .cover.sheet img { object-position: top; }
+.tiles .cover.sheet { background: #fff; border-bottom: 1px solid var(--line); }
+.tiles .placeholder { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; color: var(--muted); }
+.tiles .placeholder .ic { width: 48px; height: 48px; }
+.tiles .fav {
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  min-height: 0;
+  width: 38px;
+  height: 38px;
+  padding: 0;
+  border-radius: 19px;
+  border: none;
+  background: rgba(255, 255, 255, 0.85);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.tiles .caption { display: flex; align-items: flex-start; gap: 4px; padding: 8px 4px 8px 10px; }
+.tiles .caption .text { flex: 1; min-width: 0; }
+.tiles .name { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.tiles .artist { font-size: 14px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.tiles .caption .ib { min-height: 32px; padding: 0 6px; border: none; background: none; }
+@media (max-width: 520px) {
+  .tiles { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
+}
 .pieces .name { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .pieces .meta { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 4px; font-size: 14px; }
 .tag { background: #e3e8ee; border-radius: 6px; padding: 1px 8px; }
