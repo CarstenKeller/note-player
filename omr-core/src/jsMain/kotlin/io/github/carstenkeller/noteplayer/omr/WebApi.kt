@@ -49,6 +49,15 @@ object WebOmr {
                     m.firstEndingX?.let { num("firstEnding", it) }
                 }
             }
+            arr("navigation") {
+                for (n in r.navigation) obj {
+                    str("kind", if (n.coda) "coda" else "segno")
+                    num("x", n.x)
+                    num("y", n.y)
+                    num("system", n.systemIndex)
+                    num("measure", n.measureIndex)
+                }
+            }
             arr("warnings") { for (w in r.warnings) str(w) }
             key("score"); score(r.score)
             key("withoutVocals"); score(r.withoutVocals)

@@ -184,6 +184,21 @@ class EngravedScoreTest {
     }
 
     /**
+     * Segno and coda signs (navigation.ly, engraved with LilyPond): the segno at the start of
+     * the second line, the coda sign after "To Coda" and the one at the start of the coda, a
+     * short last line. The "S" of the title is no segno.
+     */
+    @Test
+    fun segnoAndCoda() {
+        val r = recognizeFull("navigation.png")
+        assertEquals(6, r.score.staves.size)
+        assertEquals(
+            listOf("segno 1/0", "coda 1/1", "coda 2/0"),
+            r.navigation.map { "${if (it.coda) "coda" else "segno"} ${it.systemIndex}/${it.measureIndex}" },
+        )
+    }
+
+    /**
      * Two voices in one staff: a melody above a held whole-note chord. Each voice keeps its own
      * length, the melody goes on at its own pace.
      */

@@ -259,6 +259,24 @@ object StaffDetector {
                 if (slope != 0.0) sloped += staff
             }
         }
+        // a short line (a coda, the last line of a piece) has too little ink for the threshold
+        // above: looked for again with a lower one, but only where no staff is, beginning where
+        // the other staves begin, with their line spacing
+        if (staves.size >= 2) {
+            val lefts = staves.map { it.left }.sorted()
+            val left = lefts[lefts.size / 2]
+            val typicalWidth = staves.map { it.right - it.left }.sorted()[staves.size / 2]
+            val flat = 0 // (SLOPES[0] is 0°)
+            run {
+                for (staff in detectAlong(bin, m, 0.0, profiles[flat].first, profiles[flat].second, (profiles[flat].first.maxOrNull() ?: 0) * 0.1)) {
+                    val x = (staff.left + staff.right) / 2.0
+                    val height = staff.lineY(4, x) - staff.lineY(0, x)
+                    val free = staves.none { o -> abs(o.lineY(0, x) - staff.lineY(0, x)) < 6 * d }
+                    val short = staff.right - staff.left <= 0.8 * typicalWidth
+                    if (free && short && abs(staff.left - left) <= 1.5 * d && abs(height - 4 * d) <= 0.15 * 4 * d && staff.right - staff.left >= 8 * d) staves += staff
+                }
+            }
+        }
         // along a slope, short pieces of text lines (a title) can look like a staff: a staff only
         // found there must be a good part as wide as the staves of the page usually are
         if (staves.isEmpty()) return emptyList()

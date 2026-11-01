@@ -10,6 +10,7 @@ import { readTabStaves, readTuning, type TabRead } from '../guitar/tabs';
 import { STRINGS } from '../guitar/chords';
 import { keepAwake } from '../wakelock';
 import { offerFor, repeatsOf, unfoldRepeats, type JumpOffer, type Spot } from '../repeats';
+import { navigationOf, placeOf, readJumpWords, type WordMark } from '../navigation';
 import { download } from '../backup';
 import { pdfName, piecePdf } from '../pdfexport';
 import { PieceDialog } from './PieceDialog';
@@ -216,8 +217,23 @@ export function PieceView(props: { piece: Piece; allCategories: string[]; allArt
     const octave = (r.tabs?.length ?? 0) > 0 ? -12 : 0;
     return { score: notes, notes: gs.melody, transpose: octave + capoShift, extra, length: g?.length, tempos };
   })), [sheets, includeVocals, guitar, guitarSheets, tabReads, chordsOn, gs.melody, gs.strum, capoShift, marks]);
-  /** The music as it is played: with its repeats. */
-  const score: PieceScore = useMemo(() => unfoldRepeats(written, repeats), [written, repeats]);
+  /** D.C. and D.S. (al Fine, al Coda): the words from the text of the sheets, the segno and coda signs. */
+  const navs = useMemo(() => {
+    const words: (WordMark & { spot: Spot })[] = [];
+    const signs: { kind: 'segno' | 'coda'; spot: Spot }[] = [];
+    sheets.forEach((s, i) => {
+      const r = s.shown?.result;
+      if (!r) return;
+      for (const w of readJumpWords(texts[textKey(s.id)]?.lines ?? [])) {
+        const spot = placeOf(w, i, r.score, r.staffSpace);
+        if (spot) words.push({ ...w, spot });
+      }
+      for (const n of r.navigation ?? []) signs.push({ kind: n.kind, spot: { sheet: i, system: n.system, x: n.x, measure: n.measure } });
+    });
+    return navigationOf(words, signs);
+  }, [sheets, texts, guitar]);
+  /** The music as it is played: with its repeats and jumps. */
+  const score: PieceScore = useMemo(() => unfoldRepeats(written, repeats, navs), [written, repeats, navs]);
 
   /** The tempo: from the marks on the sheet (scaled by the base tempo and %), else constant. */
   const tempo = useMemo(() => {
@@ -381,25 +397,29 @@ export function PieceView(props: { piece: Piece; allCategories: string[]; allArt
   const skipped = useRef(new Set<number>());
   const [flash, setFlash] = useState<{ sheet: number; box: Box } | null>(null);
   const lineBox = (sheet: number, system: number): Box | undefined => sheets[sheet]?.shown?.result.score.systems[system]?.box;
+  const navigated = useRef(new Set<number>());
+  const codaTaken = useRef(new Set<number>());
   const updateOffer = () => {
     const c = container.current;
-    if (!c || mode !== 'scroll' || repeats.length === 0) {
+    if (!c || mode !== 'scroll' || (repeats.length === 0 && navs.length === 0)) {
       setJumpOffer(null);
       return;
     }
-    // back at the beginning: all repeats lie ahead again
+    // back at the beginning: all repeats and jumps lie ahead again
     if (c.scrollTop < 20) {
       repeated.current.clear();
       skipped.current.clear();
+      navigated.current.clear();
+      codaTaken.current.clear();
     }
     const visible = (sheet: number, system: number) => {
       const b = lineBox(sheet, system);
       const on = b && boxOnScreen(sheet, b);
       return !!on && on.bottom > c.scrollTop + c.clientHeight * 0.05 && on.top < c.scrollTop + c.clientHeight * 0.95;
     };
-    const offer = offerFor(repeats, visible, repeated.current);
-    const next = offer && offer.kind === 'second' && skipped.current.has(offer.repeat) ? null : offer;
-    setJumpOffer((old) => (old?.kind === next?.kind && old?.repeat === next?.repeat ? old : next));
+    const offer = offerFor(repeats, navs, visible, { repeated: repeated.current, navigated: navigated.current });
+    const next = offer && ((offer.kind === 'second' && skipped.current.has(offer.repeat)) || (offer.kind === 'coda' && codaTaken.current.has(offer.nav))) ? null : offer;
+    setJumpOffer((old) => (JSON.stringify(old) === JSON.stringify(next) ? old : next));
   };
   useEffect(() => {
     const c = container.current;
@@ -407,20 +427,27 @@ export function PieceView(props: { piece: Piece; allCategories: string[]; allArt
     updateOffer();
     c.addEventListener('scroll', updateOffer, { passive: true });
     return () => c.removeEventListener('scroll', updateOffer);
-  }, [mode, repeats, sheets, zoom, cropPages]);
+  }, [mode, repeats, navs, sheets, zoom, cropPages]);
 
-  /** Scrolls to a place (its line a little below the top) and shows it for a moment. */
-  const goTo = (p: Spot, width: number) => {
+  /**
+   * Scrolls to a place and shows it for a moment. Its line comes where the line [from] stands
+   * on the screen now (where one reads), so that there is time to play it.
+   */
+  const goTo = (p: Spot, width: number, from?: Spot) => {
     const c = container.current;
     const b = lineBox(p.sheet, p.system);
     const shown = sheets[p.sheet]?.shown;
     if (!c || !b || !shown) return;
     const on = boxOnScreen(p.sheet, b);
+    const fromBox = from && lineBox(from.sheet, from.system);
+    const fromOn = from && fromBox && boxOnScreen(from.sheet, fromBox);
+    let readAt = fromOn ? fromOn.top - c.scrollTop : c.clientHeight * 0.35;
+    if (readAt < c.clientHeight * 0.1 || readAt > c.clientHeight * 0.75) readAt = c.clientHeight * 0.35;
     // (a place in a line already on the screen: no scrolling)
     if (on && (on.top < c.scrollTop || on.bottom > c.scrollTop + c.clientHeight)) {
       // at once: a gliding scroll would be taken over by the scroll mode or by the swing of a
       // swipe that still goes on (iPad); hiding the overflow for a moment stops that swing
-      const target = Math.max(0, on.top - c.clientHeight * 0.1);
+      const target = Math.max(0, on.top - readAt);
       c.style.overflowY = 'hidden';
       c.scrollTop = target;
       requestAnimationFrame(() => {
@@ -436,13 +463,22 @@ export function PieceView(props: { piece: Piece; allCategories: string[]; allArt
   };
   const jump = () => {
     if (!jumpOffer) return;
-    const r = repeats[jumpOffer.repeat];
     if (jumpOffer.kind === 'back') {
+      const r = repeats[jumpOffer.repeat];
       repeated.current.add(jumpOffer.repeat);
-      goTo(r.start, 4);
-    } else {
+      goTo(r.start, 4, r.end);
+    } else if (jumpOffer.kind === 'second') {
+      const r = repeats[jumpOffer.repeat];
       skipped.current.add(jumpOffer.repeat);
-      goTo(r.end, 6);
+      goTo(r.end, 6, r.firstEnding);
+    } else if (jumpOffer.kind === 'nav') {
+      const n = navs[jumpOffer.nav];
+      navigated.current.add(jumpOffer.nav);
+      goTo(n.to, 4, n.at);
+    } else {
+      const n = navs[jumpOffer.nav];
+      codaTaken.current.add(jumpOffer.nav);
+      if (n.coda) goTo(n.coda, 4, n.toCoda);
     }
     window.setTimeout(updateOffer, 700);
   };
@@ -777,14 +813,29 @@ export function PieceView(props: { piece: Piece; allCategories: string[]; allArt
       </div>
 
       {mode === 'scroll' && jumpOffer && (() => {
-        const r = repeats[jumpOffer.repeat];
-        const n = measureAt(jumpOffer.kind === 'back' ? r.start : { ...r.end, measure: r.end.measure + 1 });
-        const label = jumpOffer.kind === 'back'
-          ? `Wiederholung: zurück${n > 0 ? ` zu Takt ${n}` : r.start.x === 0 ? ' zum Anfang' : ''}`
-          : `Weiter zum 2. Ende${n > 0 ? ` (Takt ${n})` : ''}`;
+        const takt = (p: Spot) => {
+          const n = measureAt(p);
+          return n > 0 ? ` (Takt ${n})` : '';
+        };
+        let label: string;
+        if (jumpOffer.kind === 'back') {
+          const r = repeats[jumpOffer.repeat];
+          const n = measureAt(r.start);
+          label = `Wiederholung: zurück${n > 0 ? ` zu Takt ${n}` : r.start.x === 0 ? ' zum Anfang' : ''}`;
+        } else if (jumpOffer.kind === 'second') {
+          const r = repeats[jumpOffer.repeat];
+          label = `Weiter zum 2. Ende${takt({ ...r.end, measure: r.end.measure + 1 })}`;
+        } else if (jumpOffer.kind === 'nav') {
+          const n = navs[jumpOffer.nav];
+          label = n.kind === 'DC' ? 'D.C.: zurück zum Anfang' : `D.S.: zurück zum Segno${takt(n.to)}`;
+        } else {
+          const n = navs[jumpOffer.nav];
+          label = `Zur Coda${n.coda ? takt(n.coda) : ''}`;
+        }
+        const back = jumpOffer.kind === 'back' || jumpOffer.kind === 'nav';
         return (
           <button class={'jump-button primary ' + jumpOffer.kind} onClick={jump} style={{ bottom: `${(controlsEl.current?.offsetHeight ?? 64) + 12}px` }}>
-            <span aria-hidden="true">{jumpOffer.kind === 'back' ? '↺' : '→'}</span> {label}
+            <span aria-hidden="true">{back ? '↺' : '→'}</span> {label}
           </button>
         );
       })()}

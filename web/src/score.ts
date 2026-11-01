@@ -23,7 +23,9 @@ export interface ScoreJ { tpq: number; staves: StaffJ[]; systems: SystemJ[]; eve
  * end begins in its line.
  */
 export interface RepeatJ { start: boolean; x: number; staff: number; system: number; measure: number; firstEnding?: number }
-export interface SheetResult { staffSpace: number; skew: number; warnings: string[]; score: ScoreJ; withoutVocals: ScoreJ; tabs?: Box[]; repeats?: RepeatJ[] }
+/** A segno or coda sign above a system ([measure] as in [RepeatJ]). */
+export interface NavigationJ { kind: 'segno' | 'coda'; x: number; y: number; system: number; measure: number }
+export interface SheetResult { staffSpace: number; skew: number; warnings: string[]; score: ScoreJ; withoutVocals: ScoreJ; tabs?: Box[]; repeats?: RepeatJ[]; navigation?: NavigationJ[] }
 
 /** An event of the whole piece; [sheet] is the page it is printed on (index in the piece). */
 export interface PieceEvent extends EventJ {

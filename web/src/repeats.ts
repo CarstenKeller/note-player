@@ -2,6 +2,7 @@
 // is (for jumping there while scrolling).
 
 import type { PieceEvent, PieceScore, PieceSystem, RepeatJ, TempoChange } from './score';
+import type { Navigation } from './navigation';
 
 /** A place in the piece: sheet, line (system of that sheet), x on the page, measure of the line. */
 export interface Spot { sheet: number; system: number; x: number; measure: number }
@@ -35,28 +36,46 @@ export function repeatsOf(sheets: (RepeatJ[] | undefined)[]): Repeat[] {
 }
 
 /** What the jump button offers while scrolling. */
-export type JumpOffer = { kind: 'back'; repeat: number } | { kind: 'second'; repeat: number } | null;
+export type JumpOffer =
+  | { kind: 'back'; repeat: number }
+  | { kind: 'second'; repeat: number }
+  | { kind: 'nav'; nav: number }
+  | { kind: 'coda'; nav: number }
+  | null;
+
+/** What has been done while scrolling: repeats jumped back, D.C./D.S. jumped back. */
+export interface JumpState { repeated: Set<number>; navigated: Set<number> }
 
 /**
  * The button for the lines on the screen: at the end of a repeat not yet repeated, back to its
- * start; once repeated, at its first ending, on to the second.
- * [visible] tells whether a line (sheet, system) is on the screen; [done] the repeats jumped back.
+ * start; once repeated, at its first ending, on to the second; at a D.C./D.S., back; after it,
+ * at "To Coda", on to the coda. After a D.C./D.S. repeats are not repeated again (the usual
+ * way), their first endings are left out.
+ * [visible] tells whether a line (sheet, system) is on the screen.
  */
-export function offerFor(repeats: Repeat[], visible: (sheet: number, system: number) => boolean, done: Set<number>): JumpOffer {
+export function offerFor(repeats: Repeat[], navs: Navigation[], visible: (sheet: number, system: number) => boolean, st: JumpState): JumpOffer {
+  const back = st.navigated.size > 0;
+  for (const [i, n] of navs.entries()) {
+    if (st.navigated.has(i) && n.toCoda && n.coda && visible(n.toCoda.sheet, n.toCoda.system)) return { kind: 'coda', nav: i };
+  }
   for (const [i, r] of repeats.entries()) {
-    if (!done.has(i) && visible(r.end.sheet, r.end.system)) return { kind: 'back', repeat: i };
-    if (done.has(i) && r.firstEnding && visible(r.firstEnding.sheet, r.firstEnding.system)) return { kind: 'second', repeat: i };
+    if (!back && !st.repeated.has(i) && visible(r.end.sheet, r.end.system)) return { kind: 'back', repeat: i };
+    if ((st.repeated.has(i) || back) && r.firstEnding && visible(r.firstEnding.sheet, r.firstEnding.system)) return { kind: 'second', repeat: i };
+  }
+  for (const [i, n] of navs.entries()) {
+    if (!st.navigated.has(i) && visible(n.at.sheet, n.at.system)) return { kind: 'nav', nav: i };
   }
   return null;
 }
 
 /**
  * The piece as it is played: with its repeats (the repeated part again; the second time without
- * its first ending). The events keep their place on the page, so the music is shown where it is
- * printed.
+ * its first ending) and its D.C./D.S. (back, then to "Fine" or on to the coda; repeats are not
+ * repeated again then). The events keep their place on the page, so the music is shown where it
+ * is printed.
  */
-export function unfoldRepeats(s: PieceScore, repeats: Repeat[]): PieceScore {
-  if (repeats.length === 0 || s.events.length === 0) return s;
+export function unfoldRepeats(s: PieceScore, repeats: Repeat[], navs: Navigation[] = []): PieceScore {
+  if ((repeats.length === 0 && navs.length === 0) || s.events.length === 0) return s;
   // the time each measure begins
   const measureStart = new Map<string, number>();
   for (const e of s.events) {
@@ -66,7 +85,7 @@ export function unfoldRepeats(s: PieceScore, repeats: Repeat[]): PieceScore {
   }
   const line = (sheet: number, system: number) => s.systems.find((y) => y.sheet === sheet && y.index === system);
   const begin = (p: Spot) =>
-    p.sheet === 0 && p.system === 0 && p.x === 0 ? 0 : measureStart.get(`${p.sheet}/${p.system}/${p.measure}`) ?? line(p.sheet, p.system)?.start;
+    p.sheet === 0 && p.system === 0 && p.x === 0 && p.measure === 0 ? 0 : measureStart.get(`${p.sheet}/${p.system}/${p.measure}`) ?? line(p.sheet, p.system)?.start;
   const after = (p: Spot) => measureStart.get(`${p.sheet}/${p.system}/${p.measure + 1}`) ?? line(p.sheet, p.system)?.end;
   /** Where the first ending begins: the first note of its line from there on. */
   const firstEnding = (p: Spot) => {
@@ -74,20 +93,46 @@ export function unfoldRepeats(s: PieceScore, repeats: Repeat[]): PieceScore {
     return notes.length > 0 ? Math.min(...notes.map((e) => e.start)) : undefined;
   };
 
-  // the parts in the order they are played: [from, to) in the written time
-  const parts: [number, number][] = [];
-  let at = 0;
-  for (const r of repeats) {
+  // what may happen while playing: at a time, when it applies, and where it goes on (null: the end)
+  interface State { repeated: Set<number>; navigated: boolean }
+  interface Trigger { at: number; when: (st: State) => boolean; then: (st: State) => number | null }
+  const triggers: Trigger[] = [];
+  repeats.forEach((r, i) => {
     const from = begin(r.start);
     const to = after(r.end);
-    if (from === undefined || to === undefined || to <= from || to <= at || from < 0) continue;
+    if (from === undefined || to === undefined || to <= from) return;
+    triggers.push({ at: to, when: (st) => !st.repeated.has(i) && !st.navigated, then: (st) => { st.repeated.add(i); return from; } });
     const skip = r.firstEnding ? firstEnding(r.firstEnding) : undefined;
-    parts.push([at, to]);
-    parts.push([from, skip !== undefined && skip > from && skip < to ? skip : to]);
-    at = to;
+    if (skip !== undefined && skip > from && skip < to) triggers.push({ at: skip, when: (st) => st.repeated.has(i) || st.navigated, then: () => to });
+  });
+  navs.forEach((n) => {
+    const at = after(n.at);
+    const to = begin(n.to);
+    if (at === undefined || to === undefined || to >= at) return;
+    triggers.push({ at, when: (st) => !st.navigated, then: (st) => { st.navigated = true; return to; } });
+    const fine = n.fine && after(n.fine);
+    if (fine !== undefined) triggers.push({ at: fine, when: (st) => st.navigated, then: () => null });
+    const leave = n.toCoda && after(n.toCoda);
+    const coda = n.coda && begin(n.coda);
+    if (leave !== undefined && coda !== undefined && coda > leave) triggers.push({ at: leave, when: (st) => st.navigated, then: () => coda });
+  });
+  if (triggers.length === 0) return s;
+
+  // the parts in the order they are played: [from, to) in the written time
+  const parts: [number, number][] = [];
+  const st: State = { repeated: new Set(), navigated: false };
+  let at = 0;
+  for (let guard = 0; guard < 200; guard++) {
+    const next = triggers.filter((t) => t.at > at && t.when(st)).sort((a, b) => a.at - b.at)[0];
+    if (!next) {
+      parts.push([at, s.totalTicks]);
+      break;
+    }
+    parts.push([at, next.at]);
+    const goOn = next.then(st);
+    if (goOn === null) break;
+    at = goOn;
   }
-  if (parts.length === 0) return s;
-  parts.push([at, s.totalTicks]);
 
   const events: PieceEvent[] = [];
   const systems: PieceSystem[] = [];

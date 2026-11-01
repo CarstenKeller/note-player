@@ -71,6 +71,9 @@ data class Score(
     }
 }
 
+/** A segno (𝄋, where "D.S." goes back to) or coda sign (𝄌) above a system; [measure] as in [RepeatMark]. */
+data class NavigationSign(val coda: Boolean, val x: Double, val y: Double, val systemIndex: Int, val measureIndex: Int)
+
 /** Result of the recognition: the normalized (deskewed) page and the score in its coordinates. */
 class RecognitionResult(
     val page: GrayImage,
@@ -85,6 +88,8 @@ class RecognitionResult(
     val tabs: List<Box> = emptyList(),
     /** Repeat signs, left to right in each line. */
     val repeats: List<RepeatMark> = emptyList(),
+    /** Segno and coda signs. */
+    val navigation: List<NavigationSign> = emptyList(),
 ) {
     val hasVocals: Boolean get() = score.staves.any { it.isVocal }
 }

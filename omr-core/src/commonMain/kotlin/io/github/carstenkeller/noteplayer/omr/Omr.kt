@@ -564,7 +564,19 @@ object Omr {
         // one sign per line and place (it stands in every staff of the system)
         val signs = repeats.sortedBy { it.staffIndex }.distinctBy { Triple(it.systemIndex, it.start, (it.x / d).roundToInt()) }
             .sortedWith(compareBy({ it.systemIndex }, { it.x }))
-        return RecognitionResult(page.display, score, instrumental, d, skew, warnings, page.tabs, signs)
+        // segno and coda signs above the systems
+        val navigation = ArrayList<NavigationSign>()
+        for (c in glyphs) {
+            if (used[c.id]) continue
+            val sys = staves.indices.filter { st -> c.cx >= staves[st].left - d && c.cx <= staves[st].right + d && c.cy < staves[st].top(c.cx) + 0.5 * d && staves[st].top(c.cx) - c.cy < 7 * d }
+                .minByOrNull { st -> staves[st].top(c.cx) - c.cy } ?: continue
+            // (the top staff of its system)
+            val top = staves.indices.first { systemOf[it] == systemOf[sys] }
+            if (top != sys) continue
+            val coda = navigationSign(aggressive, c, glyphs, used, d) ?: continue
+            navigation += NavigationSign(coda, c.cx, c.cy, systemOf[sys], barlines[sys].count { it < c.cx })
+        }
+        return RecognitionResult(page.display, score, instrumental, d, skew, warnings, page.tabs, signs, navigation.sortedWith(compareBy({ it.systemIndex }, { it.x })))
     }
 
     /** Pairs (x in this staff, x in the reference staff): staff starts, matching barlines, staff ends. */
@@ -1163,6 +1175,90 @@ object Omr {
             if (thin && hook && (best == null || left < best)) best = left.toDouble()
         }
         return best
+    }
+
+    /**
+     * Segno or coda sign: true = coda (a ring with a cross through it: closed holes, the
+     * vertical stroke reaching above and below the ring), false = segno (an S with a slash, no
+     * holes, a dot on each side inside it), null = neither.
+     */
+    private fun navigationSign(img: BinaryImage, c: Component, glyphs: List<Component>, used: BooleanArray, d: Double): Boolean? {
+        val w = c.width.toDouble()
+        val h = c.height.toDouble()
+        if (h < 1.3 * d || h > 4.0 * d || w < 0.6 * d || w > 3.0 * d || c.fill < 0.12 || c.fill > 0.6) return null
+        val holes = holesIn(img, c, max(3, (0.04 * d * d).roundToInt()))
+        if (holes >= 2 && h >= 1.2 * w) {
+            // the stroke through the middle, from top to bottom
+            val mid = c.cx.roundToInt()
+            val through = (c.y0..c.y1).count { y -> (mid - 2..mid + 2).any { img[it, y] } }
+            if (through >= 0.9 * c.height) return true
+        }
+        if (holes == 0) {
+            // the dots of the segno: pieces of their own, or parts of it (then the stroke down
+            // the middle crosses the S three times or more)
+            val dots = glyphs.filter { o ->
+                o !== c && !used[o.id] && max(o.width, o.height) <= 0.6 * d && min(o.width, o.height) >= 0.15 * d &&
+                    o.cx > c.x0 - 0.3 * d && o.cx < c.x1 + 0.3 * d && o.cy > c.y0 && o.cy < c.y1
+            }
+            if (dots.any { it.cx < c.cx && it.cy > c.cy } && dots.any { it.cx > c.cx && it.cy < c.cy }) {
+                for (o in dots) used[o.id] = true
+                return false
+            }
+            val mid = c.cx.roundToInt()
+            var crossings = 0
+            var inInk = false
+            for (y in c.y0..c.y1) {
+                val ink = img[mid, y]
+                if (ink && !inInk) crossings++
+                inInk = ink
+            }
+            // (bigger than a letter S of a text, which crosses three times too, and alone: a
+            // letter has letters of its size beside it)
+            val alone = glyphs.none { o ->
+                o !== c && o.height >= 0.5 * c.height && o.x1 >= c.x0 - 2.0 * d && o.x0 <= c.x1 + 2.0 * d && o.y1 >= c.y0 && o.y0 <= c.y1
+            }
+            if (crossings >= 3 && alone && h >= 2.4 * d && w >= 1.4 * d && w <= 0.85 * h) return false
+        }
+        return null
+    }
+
+    /** Closed white areas (at least [minSize] pixels) inside the box of [c]. */
+    private fun holesIn(img: BinaryImage, c: Component, minSize: Int): Int {
+        val w = c.width + 2
+        val h = c.height + 2
+        val seen = BooleanArray(w * h)
+        fun ink(x: Int, y: Int) = x in 1 until w - 1 && y in 1 until h - 1 && img[c.x0 + x - 1, c.y0 + y - 1]
+        val stack = IntArray(w * h)
+        fun fill(start: Int): Int {
+            var n = 0
+            var sp = 0
+            stack[sp++] = start
+            seen[start] = true
+            while (sp > 0) {
+                val i = stack[--sp]
+                n++
+                val x = i % w
+                val y = i / w
+                for ((dx, dy) in arrayOf(1 to 0, -1 to 0, 0 to 1, 0 to -1)) {
+                    val nx = x + dx
+                    val ny = y + dy
+                    if (nx < 0 || ny < 0 || nx >= w || ny >= h) continue
+                    val j = ny * w + nx
+                    if (seen[j] || ink(nx, ny)) continue
+                    seen[j] = true
+                    stack[sp++] = j
+                }
+            }
+            return n
+        }
+        // the outside first (the frame around the box), then each closed area left
+        fill(0)
+        var holes = 0
+        for (i in 0 until w * h) {
+            if (seen[i] || ink(i % w, i / w)) continue
+            if (fill(i) >= minSize) holes++
+        }
+        return holes
     }
 
     /** [maxWidth] in staff spaces: the signs of a key signature may be a little wider (some fonts). */
