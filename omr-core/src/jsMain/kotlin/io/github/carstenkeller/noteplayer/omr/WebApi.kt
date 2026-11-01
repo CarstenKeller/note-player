@@ -39,6 +39,16 @@ object WebOmr {
             num("staffSpace", r.staffSpace)
             num("skew", r.skewDegrees)
             arr("tabs") { for (b in r.tabs) box(b) }
+            arr("repeats") {
+                for (m in r.repeats) obj {
+                    bool("start", m.start)
+                    num("x", m.x)
+                    num("staff", m.staffIndex)
+                    num("system", m.systemIndex)
+                    num("measure", m.measureIndex)
+                    m.firstEndingX?.let { num("firstEnding", it) }
+                }
+            }
             arr("warnings") { for (w in r.warnings) str(w) }
             key("score"); score(r.score)
             key("withoutVocals"); score(r.withoutVocals)

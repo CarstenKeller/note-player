@@ -9,6 +9,7 @@ import { linesFromPieces, type TextLine, type TextPiece } from '../guitar/text';
 import { readTabStaves, readTuning, type TabRead } from '../guitar/tabs';
 import { STRINGS } from '../guitar/chords';
 import { keepAwake } from '../wakelock';
+import { offerFor, repeatsOf, type JumpOffer, type Spot } from '../repeats';
 import { download } from '../backup';
 import { pdfName, piecePdf } from '../pdfexport';
 import { PieceDialog } from './PieceDialog';
@@ -236,15 +237,21 @@ export function PieceView(props: { piece: Piece; allCategories: string[]; allArt
   const ready = sheets.length > 0 && sheets.every((s) => s.error || (s.shown && texts[textKey(s.id)]));
 
   /** Measure numbers through the whole piece (for "ab Takt n"). */
-  const measureOf = useMemo(() => {
+  const measureNumbers = useMemo(() => {
     const numbers = new Map<string, number>();
     for (const e of score.events) {
       if (e.system < 0) continue;
       const key = `${e.sheet}/${e.system}/${e.measure}`;
       if (!numbers.has(key)) numbers.set(key, numbers.size + 1);
     }
-    return (e: PieceEvent) => numbers.get(`${e.sheet}/${e.system}/${e.measure}`) ?? 0;
+    return numbers;
   }, [score]);
+  const measureOf = useMemo(() => (e: PieceEvent) => measureNumbers.get(`${e.sheet}/${e.system}/${e.measure}`) ?? 0, [measureNumbers]);
+  /** Measure number of a place (0: not known). */
+  const measureAt = (p: Spot) => measureNumbers.get(`${p.sheet}/${p.system}/${p.measure}`) ?? 0;
+
+  /** The repeats of the piece (repeat signs read from the sheets). */
+  const repeats = useMemo(() => repeatsOf(sheets.map((s) => s.shown?.result.repeats)), [sheets]);
 
   const crops: Crop[] = useMemo(() => sheets.map((s, i) => {
     const shown = s.shown;
@@ -357,6 +364,71 @@ export function PieceView(props: { piece: Piece; allCategories: string[]; allArt
   };
 
   // --- scroll mode ----------------------------------------------------------------------
+
+  // repeats: at the end of a repeat a button jumps back to its start; the second time, at the
+  // first ending, on to the second ending
+  const [jumpOffer, setJumpOffer] = useState<JumpOffer>(null);
+  const repeated = useRef(new Set<number>());
+  const controlsEl = useRef<HTMLElement>(null);
+  const flashTimer = useRef(0);
+  const skipped = useRef(new Set<number>());
+  const [flash, setFlash] = useState<{ sheet: number; box: Box } | null>(null);
+  const lineBox = (sheet: number, system: number): Box | undefined => sheets[sheet]?.shown?.result.score.systems[system]?.box;
+  const updateOffer = () => {
+    const c = container.current;
+    if (!c || mode !== 'scroll' || repeats.length === 0) {
+      setJumpOffer(null);
+      return;
+    }
+    // back at the beginning: all repeats lie ahead again
+    if (c.scrollTop < 20) {
+      repeated.current.clear();
+      skipped.current.clear();
+    }
+    const visible = (sheet: number, system: number) => {
+      const b = lineBox(sheet, system);
+      const on = b && boxOnScreen(sheet, b);
+      return !!on && on.bottom > c.scrollTop + c.clientHeight * 0.05 && on.top < c.scrollTop + c.clientHeight * 0.95;
+    };
+    const offer = offerFor(repeats, visible, repeated.current);
+    const next = offer && offer.kind === 'second' && skipped.current.has(offer.repeat) ? null : offer;
+    setJumpOffer((old) => (old?.kind === next?.kind && old?.repeat === next?.repeat ? old : next));
+  };
+  useEffect(() => {
+    const c = container.current;
+    if (!c) return;
+    updateOffer();
+    c.addEventListener('scroll', updateOffer, { passive: true });
+    return () => c.removeEventListener('scroll', updateOffer);
+  }, [mode, repeats, sheets, zoom, cropPages]);
+
+  /** Scrolls to a place (its line a little below the top) and shows it for a moment. */
+  const goTo = (p: Spot, width: number) => {
+    const c = container.current;
+    const b = lineBox(p.sheet, p.system);
+    const shown = sheets[p.sheet]?.shown;
+    if (!c || !b || !shown) return;
+    const on = boxOnScreen(p.sheet, b);
+    // (a place in a line already on the screen: no scrolling)
+    if (on && (on.top < c.scrollTop || on.bottom > c.scrollTop + c.clientHeight)) c.scrollTo({ top: on.top - c.clientHeight * 0.1, behavior: 'smooth' });
+    const ss = shown.result.staffSpace;
+    const x = p.x > 0 ? p.x : b[0];
+    setFlash({ sheet: p.sheet, box: [x - 0.3 * ss, b[1], Math.min(b[2], x + width * ss), b[3]] });
+    window.clearTimeout(flashTimer.current);
+    flashTimer.current = window.setTimeout(() => setFlash(null), 2500);
+  };
+  const jump = () => {
+    if (!jumpOffer) return;
+    const r = repeats[jumpOffer.repeat];
+    if (jumpOffer.kind === 'back') {
+      repeated.current.add(jumpOffer.repeat);
+      goTo(r.start, 4);
+    } else {
+      skipped.current.add(jumpOffer.repeat);
+      goTo(r.end, 6);
+    }
+    window.setTimeout(updateOffer, 700);
+  };
 
   const touching = useRef(0);
   useEffect(() => {
@@ -676,6 +748,7 @@ export function PieceView(props: { piece: Piece; allCategories: string[]; allArt
                   {notesBySheet[i]?.map((e, k) => mark(e, s.shown!, 'note', 'n' + k))}
                   {startEvents.filter((e) => e.sheet === i).map((e, k) => mark(e, s.shown!, 'start', 's' + k))}
                   {lit.filter((e) => e.sheet === i).map((e, k) => mark(e, s.shown!, 'lit', 'l' + k))}
+                  {flash?.sheet === i && mark({ start: 0, duration: 0, pitches: [], holds: [], staff: 0, system: -1, measure: -1, box: flash.box }, s.shown, 'jump-target', 'jump')}
                 </div>
               ) : (
                 <div class="placeholder">{s.error ? `Blatt ${i + 1} konnte nicht erkannt werden: ${s.error}` : `Blatt ${i + 1} wird erkannt …`}</div>
@@ -684,6 +757,19 @@ export function PieceView(props: { piece: Piece; allCategories: string[]; allArt
           ))}
         </div>
       </div>
+
+      {mode === 'scroll' && jumpOffer && (() => {
+        const r = repeats[jumpOffer.repeat];
+        const n = measureAt(jumpOffer.kind === 'back' ? r.start : { ...r.end, measure: r.end.measure + 1 });
+        const label = jumpOffer.kind === 'back'
+          ? `Wiederholung: zurück${n > 0 ? ` zu Takt ${n}` : r.start.x === 0 ? ' zum Anfang' : ''}`
+          : `Weiter zum 2. Ende${n > 0 ? ` (Takt ${n})` : ''}`;
+        return (
+          <button class={'jump-button primary ' + jumpOffer.kind} onClick={jump} style={{ bottom: `${(controlsEl.current?.offsetHeight ?? 64) + 12}px` }}>
+            <span aria-hidden="true">{jumpOffer.kind === 'back' ? '↺' : '→'}</span> {label}
+          </button>
+        );
+      })()}
 
       {panel && (
         <div class="panel">
@@ -777,7 +863,7 @@ export function PieceView(props: { piece: Piece; allCategories: string[]; allArt
         </div>
       )}
 
-      <footer class="controls">
+      <footer class="controls" ref={controlsEl}>
         <div class="segmented">
           <IconButton class={mode === 'play' ? 'on' : ''} icon="note" label="Abspielen" onClick={() => switchMode('play')} />
           <IconButton class={mode === 'scroll' ? 'on' : ''} icon="scroll" label="Scrollen" onClick={() => switchMode('scroll')} />

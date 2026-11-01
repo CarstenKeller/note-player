@@ -223,6 +223,27 @@ object Omr {
             b.clear(); b += merged
         }
 
+        // --- repeat signs: two dots in the spaces next to the middle line, right after a
+        // barline (the repeat starts) or right before it (it ends) ---------------------------
+        val repeats = ArrayList<RepeatMark>()
+        for ((si, s) in staves.withIndex()) {
+            val dots = glyphs.filter { c ->
+                !used[c.id] && glyphStaff[c.id] == si && max(c.width, c.height) <= 0.7 * d && min(c.width, c.height) >= 0.25 * d && c.fill >= 0.5
+            }
+            fun inSpace(c: Component, line: Int) = abs(c.cy - (s.lineY(line, c.cx) + s.lineY(line + 1, c.cx)) / 2) <= 0.3 * d
+            for (b in barlines[si]) {
+                for (start in listOf(true, false)) {
+                    val side = dots.filter { c -> if (start) c.cx - b in 0.2 * d..1.8 * d else b - c.cx in 0.2 * d..1.8 * d }
+                    val upper = side.firstOrNull { inSpace(it, 1) } ?: continue
+                    val lower = side.firstOrNull { inSpace(it, 2) && abs(it.cx - upper.cx) <= 0.4 * d } ?: continue
+                    used[upper.id] = true
+                    used[lower.id] = true
+                    val before = barlines[si].count { it < b - 0.5 * d }
+                    repeats += RepeatMark(start, b, si, systemOf[si], if (start) before + 1 else before, if (start) null else firstEnding(bin, staves, staves.indices.first { systemOf[it] == systemOf[si] }, b, d))
+                }
+            }
+        }
+
         // --- accidentals and dots -----------------------------------------------------------
         for (h in heads) {
             val acc = glyphs.filter { c ->
@@ -540,7 +561,10 @@ object Omr {
         val score = Score(Score.TPQ, events, staffInfos, systems)
         val instrumental = Score(Score.TPQ, instrEvents, staffInfos, instrSystems)
         if (score.noteCount == 0) warnings += "Es wurden Notenlinien, aber keine Noten erkannt."
-        return RecognitionResult(page.display, score, instrumental, d, skew, warnings, page.tabs)
+        // one sign per line and place (it stands in every staff of the system)
+        val signs = repeats.sortedBy { it.staffIndex }.distinctBy { Triple(it.systemIndex, it.start, (it.x / d).roundToInt()) }
+            .sortedWith(compareBy({ it.systemIndex }, { it.x }))
+        return RecognitionResult(page.display, score, instrumental, d, skew, warnings, page.tabs, signs)
     }
 
     /** Pairs (x in this staff, x in the reference staff): staff starts, matching barlines, staff ends. */
@@ -1108,6 +1132,37 @@ object Omr {
             g.absorb(sorted[i])
         }
         return byRoot.values.toList()
+    }
+
+    /**
+     * The "1." bracket of a repeat that ends at [barX]: a thin line above the top staff [si] of
+     * the system (also above chord names and diagrams) running left from the end, with a hook
+     * down at its left end. Returns its left end.
+     */
+    private fun firstEnding(bin: BinaryImage, staves: List<Staff>, si: Int, barX: Double, d: Double): Double? {
+        val s = staves[si]
+        var best: Double? = null
+        val top = s.top(barX)
+        for (y in (top - 12 * d).roundToInt()..(top - 0.8 * d).roundToInt()) {
+            // (not the lines of another staff)
+            if (staves.any { st -> y >= st.top(barX) - 0.3 * d && y <= st.bottom(barX) + 0.3 * d }) continue
+            // the line, followed to the left (small gaps where something crosses it)
+            var x = (barX - 0.2 * d).roundToInt()
+            if (!bin[x, y] && !bin[x - 1, y] && !bin[x - 2, y]) continue
+            var gap = 0
+            var left = x
+            while (x > s.left && gap <= 2) {
+                if (bin[x, y]) { left = x; gap = 0 } else gap++
+                x--
+            }
+            if (barX - left < 3 * d) continue
+            // thin (no ink a little above and below the middle of it) and with a hook down at the left end
+            val mid = ((left + barX) / 2).roundToInt()
+            val thin = (mid - 3..mid + 3).none { bin[it, y - (0.5 * d).roundToInt()] || bin[it, y + (0.5 * d).roundToInt()] }
+            val hook = (1..(1.0 * d).roundToInt()).count { k -> (left - 1..left + 2).any { bin[it, y + k] } } >= 0.8 * d
+            if (thin && hook && (best == null || left < best)) best = left.toDouble()
+        }
+        return best
     }
 
     /** [maxWidth] in staff spaces: the signs of a key signature may be a little wider (some fonts). */

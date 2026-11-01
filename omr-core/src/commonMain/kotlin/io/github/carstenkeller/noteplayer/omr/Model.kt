@@ -39,6 +39,21 @@ data class MusicEvent(
 
 data class SystemInfo(val index: Int, val box: Box, val startTick: Int, val endTick: Int)
 
+/**
+ * A repeat sign: a barline with two dots after it (the repeat starts, [start]) or before it
+ * (it ends: play again from the last start). [measure] counts the measures of its line from 0:
+ * the first measure of the repeat, or the last one.
+ */
+data class RepeatMark(
+    val start: Boolean,
+    val x: Double,
+    val staffIndex: Int,
+    val systemIndex: Int,
+    val measureIndex: Int,
+    /** An end: where its first ending ("1." bracket above the staff) begins in its line, if there is one. */
+    val firstEndingX: Double? = null,
+)
+
 data class Score(
     val ticksPerQuarter: Int,
     val events: List<MusicEvent>,
@@ -68,6 +83,8 @@ class RecognitionResult(
     val warnings: List<String>,
     /** Guitar tablature staves (six lines); their numbers are not read as notes. */
     val tabs: List<Box> = emptyList(),
+    /** Repeat signs, left to right in each line. */
+    val repeats: List<RepeatMark> = emptyList(),
 ) {
     val hasVocals: Boolean get() = score.staves.any { it.isVocal }
 }

@@ -208,6 +208,23 @@ input[type='checkbox'] { width: 24px; height: 24px; }
 .mark.note { border: 1.5px solid rgba(31, 120, 200, 0.55); }
 .mark.start { background: rgba(31, 120, 200, 0.3); border: 2px solid rgba(31, 120, 200, 0.9); }
 .mark.lit { background: var(--highlight); }
+.mark.jump-target { background: rgba(31, 59, 87, 0.18); border: 3px solid var(--accent); animation: jump-flash 2.5s ease-out forwards; }
+@keyframes jump-flash { 0%, 60% { opacity: 1; } 100% { opacity: 0; } }
+/* the button for jumping back to the start of a repeat (scroll mode), above the controls */
+.piece { position: relative; }
+.jump-button {
+  position: absolute;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 5;
+  min-height: 52px;
+  padding: 0 22px;
+  border-radius: 26px;
+  font-size: 17px;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.25);
+  white-space: nowrap;
+}
+.jump-button span { font-size: 22px; margin-right: 4px; }
 .start-chip { background: #e3eef9; border-color: rgba(31, 120, 200, 0.6); }
 .hint { white-space: nowrap; }
 .placeholder { padding: 48px 24px; color: var(--muted); text-align: center; }

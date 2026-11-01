@@ -17,7 +17,13 @@ export interface EventJ {
   measure: number;
 }
 export interface ScoreJ { tpq: number; staves: StaffJ[]; systems: SystemJ[]; events: EventJ[] }
-export interface SheetResult { staffSpace: number; skew: number; warnings: string[]; score: ScoreJ; withoutVocals: ScoreJ; tabs?: Box[] }
+/**
+ * A repeat sign: [start] = the repeat begins after the barline at [x], else it ends there.
+ * [measure] counts the measures of its line from 0; [firstEnding]: where the "1." bracket of an
+ * end begins in its line.
+ */
+export interface RepeatJ { start: boolean; x: number; staff: number; system: number; measure: number; firstEnding?: number }
+export interface SheetResult { staffSpace: number; skew: number; warnings: string[]; score: ScoreJ; withoutVocals: ScoreJ; tabs?: Box[]; repeats?: RepeatJ[] }
 
 /** An event of the whole piece; [sheet] is the page it is printed on (index in the piece). */
 export interface PieceEvent extends EventJ {
