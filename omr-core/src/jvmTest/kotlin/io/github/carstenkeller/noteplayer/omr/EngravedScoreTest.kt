@@ -167,6 +167,23 @@ class EngravedScoreTest {
     }
 
     /**
+     * Things that were read wrong in printed piano music (quality.ly, engraved with LilyPond):
+     * the eighth rest of the upper voice above a whole note (not a sharp of the next note), a
+     * key signature in a wide font, an "8va" line (an octave higher up to its hook), a second
+     * in a chord (one head beside the stem) and a bass clef within the line.
+     */
+    @Test
+    fun printedPianoDetails() {
+        val s = recognize("quality.png")
+        assertEquals(
+            "0/240 0/1920:G4 240/480:D5 720/240:D5 960/480:D5 1440/480:D5 " +
+                "1920/240:B5 2160/240:C6 2400/240:D6 2640/240:D6 2880/480:D6 3360/480:D6 " +
+                "3840/960:D4+E4 4800/960:G5 5760/960:C4 6720/960:E4",
+            s.events.joinToString(" ") { e -> "${e.startTick}/${e.durationTicks}" + if (e.pitches.isEmpty()) "" else ":" + e.pitches.joinToString("+") { name(it) } },
+        )
+    }
+
+    /**
      * Two voices in one staff: a melody above a held whole-note chord. Each voice keeps its own
      * length, the melody goes on at its own pace.
      */

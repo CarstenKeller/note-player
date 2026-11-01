@@ -132,7 +132,7 @@ object Omr {
             // strokes of a clef do not survive the line removal
             val lowerOfPair = si > 0 && systemOf[si - 1] == systemOf[si] && (si + 1 >= staves.size || systemOf[si + 1] != systemOf[si])
             val (clef, clefRight) = classifyClef(bin, staff, d, m.lineThickness, lowerOfPair)
-            val header = readHeader(aggressive, staff, own, notes, clefRight, d, headerUsed)
+            val header = readHeader(aggressive, staff, own, notes, clefRight, d, headerUsed, clef)
             clefs[si] = clef
             keys[si] = header.second
             headerEnd[si] = header.third
@@ -154,6 +154,24 @@ object Omr {
             // its key signature was misread (or not read): keep its signs from being taken as
             // notes, rests or accidentals of the first note
             headerEnd[i] = max(headerEnd[i], clefEnd[i] + (abs(commonKey) * 1.1 + 0.6) * d)
+        }
+        // a key changes within a piece: a staff takes the key on which its neighbours agree (the
+        // other staff of its system, the same staff of the systems before and after it)
+        run {
+            val read = keys.copyOf()
+            for (i in keys.indices) {
+                val sys = systemOf[i]
+                val members = staves.indices.filter { systemOf[it] == sys }
+                val pos = members.indexOf(i)
+                val near = ArrayList<Int>()
+                for (o in members) if (o != i) near += read[o]
+                for (other in listOf(sys - 1, sys + 1)) staves.indices.filter { systemOf[it] == other }.getOrNull(pos)?.let { near += read[it] }
+                val best = near.groupingBy { it }.eachCount().maxByOrNull { it.value } ?: continue
+                if (best.key != keys[i] && best.value >= 2 && best.value * 2 > near.size) {
+                    keys[i] = best.key
+                    headerEnd[i] = max(headerEnd[i], clefEnd[i] + (abs(best.key) * 1.1 + 0.6) * d)
+                }
+            }
         }
         heads.removeAll { it.cx < headerEnd[it.staff] }
         val consumed = HashSet<Int>()
@@ -210,7 +228,10 @@ object Omr {
             val acc = glyphs.filter { c ->
                 !used[c.id] && glyphStaff[c.id] == h.staff && c.x0 > headerEnd[h.staff] &&
                     c.x1 <= h.box.left + 0.15 * d && c.x1 >= h.box.left - 1.8 * d &&
-                    abs(c.cy - h.cy) <= 1.0 * d && accidentalLike(c, d)
+                    abs(c.cy - h.cy) <= 1.0 * d && accidentalLike(c, d) &&
+                    // a sharp or natural is centred on its note; a flat's bowl is at the note, so
+                    // the sign stands a little higher (a rest of another voice is higher still)
+                    (if (classifyAccidental(aggressive, c) < 0) h.cy - c.cy in -0.3 * d..1.0 * d else abs(c.cy - h.cy) <= 0.55 * d)
             }.maxByOrNull { it.x1 }
             if (acc != null) {
                 h.accidental = classifyAccidental(aggressive, acc)
@@ -254,7 +275,18 @@ object Omr {
                 if (used[c.id] || glyphStaff[c.id] != si || c.cx <= headerEnd[si]) continue
                 if (c.cx < s.left || c.cx > s.right) continue
                 if (heads.any { h -> c.x1 >= h.box.left && c.x0 <= h.box.right && c.y1 >= h.box.top && c.y0 <= h.box.bottom }) continue
-                val rest = classifyRest(aggressive, s, c, d) ?: continue
+                // a flag cut off its stem is no rest
+                val atStem = heads.any { h ->
+                    h.staff == si && h.stemDir != 0 && c.x0 - h.stemX in -0.3 * d..1.0 * d &&
+                        c.y0 <= max(h.stemTip, h.cy) + 0.5 * d && c.y1 >= min(h.stemTip, h.cy) - 0.5 * d
+                } || heads.any { h ->
+                    // (or of a black note whose stem was not found)
+                    h.staff == si && h.stemDir == 0 && !h.hollow && abs(c.cx - h.cx) <= 1.0 * d && abs(c.cy - h.cy) <= 3.5 * d
+                }
+                // a note of the other voice right below or above (a rest of one voice may stand
+                // wholly outside the staff, over or under the other voice's note)
+                val partner = heads.any { h -> h.staff == si && abs(h.cx - c.cx) <= 1.5 * d && abs(h.cy - c.cy) <= 5 * d }
+                val rest = classifyRest(aggressive, s, c, d, atStem, partner) ?: continue
                 used[c.id] = true
                 var dur = rest.first
                 val restBox = Box(c.x0.toFloat(), c.y0.toFloat(), c.x1.toFloat(), c.y1.toFloat())
@@ -277,7 +309,34 @@ object Omr {
             }
             items[si].sortBy { it.x }
             for (it in items[si]) it.measure = barlines[si].count { b -> b < it.x }
-            assignPitches(items[si], staves[si], clefs[si], keys[si])
+            // a clef within the line changes the clef from there on
+            val changes = ArrayList<Pair<Double, Clef>>()
+            for (c in glyphs) {
+                if (used[c.id] || glyphStaff[c.id] != si || c.cx <= headerEnd[si] + d || c.cx > s.right) continue
+                val clef = clefChange(c, glyphs, used, s, d) ?: continue
+                used[c.id] = true
+                changes += c.x1.toDouble() to clef
+            }
+            // the loops of a clef can be taken for notes (its stroke for a stem): the clef holds them
+            for (it in items[si].toList()) {
+                val comp = it.heads.firstOrNull()?.comp ?: continue
+                // (the loops of a clef look hollow)
+                if (comp.cx <= headerEnd[si] + d || !it.heads.all { h -> h.hollow } || (it.heads.size > 1 && it.heads.any { h -> h.stemDir != 0 })) continue
+                // (a whole note touching the stem of another note is no clef)
+                if (heads.any { h -> h !in it.heads && h.stemDir != 0 && h.cx in comp.x0.toDouble()..comp.x1.toDouble() && h.cy in comp.y0.toDouble()..comp.y1.toDouble() }) continue
+                val clef = clefChange(comp, glyphs, used, s, d) ?: continue
+                items[si].remove(it)
+                changes += comp.x1.toDouble() to clef
+            }
+            changes.sortBy { it.first }
+            assignPitches(items[si], staves[si], clefs[si], keys[si], changes)
+            // "8va" (or "8vb") with a dashed line: the notes under it sound an octave higher (lower)
+            for ((from, to, shift) in octaveLines(bin, glyphs, s, d)) {
+                for (it in items[si]) if (it.x >= from && it.x <= to && it.heads.isNotEmpty()) {
+                    it.pitches = it.pitches.map { p -> p + shift }
+                    for (h in it.heads) h.pitch += shift
+                }
+            }
             detectTies(conservative, bin, items[si], staves[si], d)
         }
         applyTriplets(aggressive, glyphs, used, staves, items, d)
@@ -1051,8 +1110,9 @@ object Omr {
         return byRoot.values.toList()
     }
 
-    private fun accidentalLike(c: Component, d: Double) =
-        c.height >= 1.4 * d && c.height <= 3.4 * d && c.width >= 0.35 * d && c.width <= 1.15 * d
+    /** [maxWidth] in staff spaces: the signs of a key signature may be a little wider (some fonts). */
+    private fun accidentalLike(c: Component, d: Double, maxWidth: Double = 1.15) =
+        c.height >= 1.4 * d && c.height <= 3.4 * d && c.width >= 0.35 * d && c.width <= maxWidth * d
 
     /** +1 sharp, -1 flat, 0 natural. */
     private fun classifyAccidental(img: BinaryImage, c: Component): Int {
@@ -1117,7 +1177,10 @@ object Omr {
             if (colInk[i] < minInk) { i++; continue }
             val start = i
             while (i < colInk.size && colInk[i] > 0) i++
-            if (i - start >= 0.4 * d) { x0 = s.left + start; x1 = s.left + minOf(i - 1, start + (3 * d).toInt()); break }
+            // (a clef has much ink; what is left of the staff lines at their start has little)
+            var sum = 0
+            for (k in start until i) sum += colInk[k]
+            if (i - start >= 0.4 * d && sum >= 0.5 * d * d) { x0 = s.left + start; x1 = s.left + minOf(i - 1, start + (3 * d).toInt()); break }
         }
         val fallbackClef = if (lowerOfPair) Clef.BASS else Clef.TREBLE
         if (x0 < 0) return result(fallbackClef)
@@ -1154,7 +1217,10 @@ object Omr {
         return result(Clef.BASS)
     }
 
-    private fun readHeader(img: BinaryImage, staff: Staff, own: List<Component>, notes: List<Box>, clefRight: Int?, d: Double, used: BooleanArray): Triple<Clef, Int, Double> {
+    private val SHARP_PLACES = intArrayOf(0, 3, -1, 2, 5, 1, 4)
+    private val FLAT_PLACES = intArrayOf(4, 1, 5, 2, 6, 3, 7)
+
+    private fun readHeader(img: BinaryImage, staff: Staff, own: List<Component>, notes: List<Box>, clefRight: Int?, d: Double, used: BooleanArray, knownClef: Clef): Triple<Clef, Int, Double> {
         fun holdsNote(c: Component) = notes.any { it.centerX >= c.x0 && it.centerX <= c.x1 && it.centerY >= c.y0 && it.centerY <= c.y1 }
         val left = staff.left
         var cursor = left + 0.5 * d
@@ -1227,13 +1293,13 @@ object Omr {
             var c = candidates[k]
             var parts = listOf(c)
             if (c.x0 >= keyCursor + 2.2 * d) break
-            if (!accidentalLike(c, d)) {
+            if (!accidentalLike(c, d, 1.3)) {
                 // pieces right next to each other that together have the size of a sign
                 val group = arrayListOf(c)
                 var j = k + 1
                 while (j < candidates.size && candidates[j].x0 <= group.maxOf { it.x1 } + 0.4 * d) group += candidates[j++]
                 val merged = Component(-1).apply { for (g in group) absorb(g) }
-                if (group.size > 1 && accidentalLike(merged, d) && !holdsNote(merged)) {
+                if (group.size > 1 && accidentalLike(merged, d, 1.3) && !holdsNote(merged)) {
                     c = merged
                     parts = group
                     k = j - 1
@@ -1241,7 +1307,10 @@ object Omr {
             }
             k++
             if (max(c.width, c.height) < 0.6 * d) { keyCursor = max(keyCursor, c.x1.toDouble()); continue } // specks, clef dots
-            if (!accidentalLike(c, d) || holdsNote(c)) break
+            // the two dots of a bass clef (taken together they are as tall as a sign)
+            if (knownClef == Clef.BASS && signs.isEmpty() && c.width <= 0.7 * d && c.x0 < (clefRight ?: cursor.roundToInt()) + 1.0 * d &&
+                c.cy < staff.lineY(2, c.cx)) { keyCursor = max(keyCursor, c.x1.toDouble()); continue }
+            if (!accidentalLike(c, d, 1.3) || holdsNote(c)) break
             val prev = signs.lastOrNull()
             if (prev != null && abs(c.cy - prev.cy) < 0.35 * d && min(c.height, prev.height) >= 0.7 * max(c.height, prev.height)) {
                 // both belong to that other symbol
@@ -1249,6 +1318,23 @@ object Omr {
                 keyCursor = signs.lastOrNull()?.x1?.toDouble() ?: beforeSigns
                 break
             }
+            // each sign of a key signature has its place (sharps F C G D A E B, flats B E A D G C F;
+            // half staff spaces below the top line of a treble staff): what stands elsewhere is
+            // the first note or rest
+            val flat = classifyAccidental(img, c) < 0
+            val firstFlat = signs.firstOrNull()?.let { classifyAccidental(img, it) < 0 } ?: flat
+            if (signs.size >= 7 || flat != firstFlat) break
+            val place = (if (flat) FLAT_PLACES else SHARP_PLACES)[signs.size] + when (knownClef) {
+                Clef.TREBLE -> 0
+                Clef.BASS -> 2
+                Clef.ALTO -> 1
+            }
+            val expected = staff.lineY(0, c.cx) + place * d / 2
+            // (a flat's place is its bowl, at the bottom)
+            val y = if (flat) c.y1 - 0.5 * d else c.cy
+            if (abs(y - expected) > (if (signs.isEmpty()) 0.8 else 0.6) * d) break
+            // the signs stand close together; the first note keeps a distance
+            if (signs.isNotEmpty() && c.x0 - signs.last().x1 > 0.9 * d) break
             if (signs.isEmpty()) beforeSigns = keyCursor
             signs += c
             partsOf[c] = parts
@@ -1330,6 +1416,15 @@ object Omr {
         return Triple(clef, key, max(cursor + 0.1 * d, left + 3.0 * d))
     }
 
+    /** [a] (without a stem of its own) sits right beside the stem of [b], next to its heads. */
+    private fun besideStem(a: Head, b: Head, d: Double): Boolean {
+        if (a.stemDir != 0 || b.stemDir == 0 || a.hollow != b.hollow) return false
+        val touches = if (b.stemDir < 0) abs(a.box.left - b.stemX) <= 0.35 * d else abs(a.box.right - b.stemX) <= 0.35 * d
+        return touches && abs(a.cy - b.cy) <= 4 * d
+    }
+
+    private fun wider(a: Head, b: Head) = (a.box.right - a.box.left) >= 1.2f * (b.box.right - b.box.left)
+
     private fun groupChords(heads: List<Head>, d: Double): List<List<Head>> {
         val parent = IntArray(heads.size) { it }
         fun find(i: Int): Int {
@@ -1346,7 +1441,10 @@ object Omr {
             val dy = abs(a.cy - b.cy)
             val same = when {
                 a.stemDir != 0 && b.stemDir != 0 ->
-                    a.stemDir == b.stemDir && abs(a.stemX - b.stemX) <= 0.5 * d && dy <= 4 * d
+                    (a.stemDir == b.stemDir && abs(a.stemX - b.stemX) <= 0.5 * d && dy <= 4 * d) ||
+                        // a second in a chord: one head sits on the other side of the stem and
+                        // seems to have its stem the other way
+                        (abs(a.stemX - b.stemX) <= 0.3 * d && dx >= 0.6 * d && dy <= 1.2 * d)
                 // a whole note next to a black note with a stem belongs to another voice (two
                 // voices in one staff, e.g. a held chord below a melody): it keeps its own
                 // length. Next to a hollow head with a stem it is part of a half-note chord (a
@@ -1354,12 +1452,26 @@ object Omr {
                 // same head found twice.
                 ((a.stemDir == 0 && a.hollow && b.stemDir != 0 && !b.hollow) ||
                     (b.stemDir == 0 && b.hollow && a.stemDir != 0 && !a.hollow)) && dy > 0.4 * d -> false
+                // a head set beside the stem of a chord (a second): it touches the stem
+                besideStem(a, b, d) || besideStem(b, a, d) -> true
+                // a whole note is clearly wider than a half note: above or below a half note it
+                // belongs to another voice
+                ((a.stemDir == 0 && a.hollow && b.stemDir != 0 && b.hollow && wider(a, b)) ||
+                    (b.stemDir == 0 && b.hollow && a.stemDir != 0 && a.hollow && wider(b, a))) && dy > 0.4 * d -> false
                 else -> (dx <= 0.6 * d && dy <= 4 * d) || (dx <= 1.5 * d && dy <= 1.2 * d)
             }
             if (same) union(i, j)
         }
         val byRoot = LinkedHashMap<Int, ArrayList<Head>>()
         for (i in heads.indices) byRoot.getOrPut(find(i)) { ArrayList() } += heads[i]
+        // the heads set beside the stem take its direction
+        for (g in byRoot.values) {
+            val dirs = g.filter { it.stemDir != 0 }.groupingBy { it.stemDir }.eachCount()
+            if (dirs.size < 2) continue
+            val dir = dirs.maxBy { it.value }.key
+            val model = g.first { it.stemDir == dir }
+            for (h in g) if (h.stemDir != 0 && h.stemDir != dir) { h.stemDir = dir; h.stemTip = model.stemTip; h.stemX = model.stemX }
+        }
         // filled heads need a stem; stemless filled blobs are usually not notes
         return byRoot.values.filter { g -> g.any { it.hollow } || g.any { it.stemDir != 0 } }
     }
@@ -1424,10 +1536,17 @@ object Omr {
     }
 
     /** Duration and whether it is a whole-measure rest. */
-    private fun classifyRest(img: BinaryImage, s: Staff, c: Component, d: Double): Pair<Int, Boolean>? {
+    private fun classifyRest(img: BinaryImage, s: Staff, c: Component, d: Double, atStem: Boolean = false, partner: Boolean = false): Pair<Int, Boolean>? {
         val top = s.top(c.cx)
         val bottom = s.bottom(c.cx)
-        if (c.cy < top - 0.3 * d || c.cy > bottom + 0.3 * d) return null
+        if (c.cy < top - 0.3 * d || c.cy > bottom + 0.3 * d) {
+            // an eighth rest of the upper voice above the staff (below it stand lyrics)
+            val outside = c.cy >= top - 2.2 * d && c.cy < top
+            val h = c.height
+            if (outside && partner && !atStem && c.width.toDouble() in 0.55 * d..1.4 * d && h >= 1.1 * d && h < 2.0 * d && c.fill <= 0.6 &&
+                hasBall(img, c, d) && thinBottom(img, c, d)) return Score.TPQ / 2 to false
+            return null
+        }
         val mid = s.lineY(2, c.cx)
         val w = c.width
         val h = c.height
@@ -1443,13 +1562,25 @@ object Omr {
             }
         }
         if (w < 0.55 * d || w > 1.4 * d) return null
-        if (h >= 2.0 * d && h <= 3.4 * d && abs(c.cy - mid) <= 1.0 * d && c.fill in 0.2..0.75) {
+        // (a rest of the upper or lower voice stands higher or lower, but reaches into the staff)
+        val shifted = !atStem && abs(c.cy - mid) <= 2.4 * d && c.y1 >= top + 0.7 * d && c.y0 <= bottom - 0.7 * d
+        if (h >= 2.0 * d && h <= 3.4 * d && (abs(c.cy - mid) <= 1.0 * d || shifted) && c.fill in 0.2..0.75) {
             // a tall eighth rest: shorter, and below its head only a thin slanting stroke; a
             // quarter rest ends in a hook
             // (quarter rests are about three staff spaces high)
             return (if (h < 2.5 * d && thinBottom(img, c, d)) Score.TPQ / 2 else Score.TPQ) to false
         }
-        if (h >= 1.1 * d && h < 2.0 * d && abs(c.cy - mid) <= 1.2 * d && c.fill <= 0.6) return Score.TPQ / 2 to false
+        if (h >= 1.1 * d && h < 2.0 * d && c.fill <= 0.6) {
+            // an eighth rest; in the upper or lower voice of a staff with two voices it stands
+            // higher or lower (then its thin slanting stroke below the ball must be seen)
+            // (its ball is a solid blob; a piece of a slur is only a thin stroke)
+            if (!hasBall(img, c, d)) return null
+            if (abs(c.cy - mid) <= 1.2 * d) return Score.TPQ / 2 to false
+            // (it reaches well into the staff: the hook of a bracket above it does not)
+            if (!atStem && abs(c.cy - mid) <= 2.4 * d && c.y1 >= top + 0.7 * d && c.y0 <= bottom - 0.7 * d && thinBottom(img, c, d)) {
+                return Score.TPQ / 2 to false
+            }
+        }
         return null
     }
 
@@ -1515,6 +1646,19 @@ object Omr {
             for (p in chain) used[p.c.id] = true
             for (it in items[si]) if (it.box.centerX in from..to) it.duration = (it.duration * 2.0 / 3).roundToInt()
         }
+    }
+
+    /** Whether the upper half of [c] holds a solid square of about a third of a staff space. */
+    private fun hasBall(img: BinaryImage, c: Component, d: Double): Boolean {
+        val k = max(2, (0.3 * d).roundToInt())
+        for (y in c.y0..(c.y0 + c.height / 2 - k + 1).coerceAtLeast(c.y0)) {
+            for (x in c.x0..(c.x1 - k + 1)) {
+                var n = 0
+                for (yy in y until y + k) for (xx in x until x + k) if (img[xx, yy]) n++
+                if (n >= 0.85 * k * k) return true
+            }
+        }
+        return false
     }
 
     /** Whether the lower third of [c] is only a thin stroke (ink per row, typically). */
@@ -1660,9 +1804,114 @@ object Omr {
         return false
     }
 
-    private fun assignPitches(items: List<Item>, staff: Staff, clef: Clef, key: Int) {
+    /**
+     * Octave lines of a staff: a dashed line above the staff that begins with "8va" (or "(8)" at
+     * the start of the next line), or below it with "8vb". Returns the range of x and the shift.
+     */
+    private fun octaveLines(bin: BinaryImage, glyphs: List<Component>, s: Staff, d: Double): List<Triple<Double, Double, Int>> {
+        val lines = ArrayList<Triple<Double, Double, Int>>()
+        // the dashes are thin like staff lines and may be gone with them: they are looked for in
+        // the picture with its lines, row by row
+        class Dash(val x0: Int, val x1: Int, val y: Int)
+        val minDash = max(2, (0.2 * d).roundToInt())
+        val maxDash = 1.6 * d
+        fun dashesAt(y: Int): List<Dash> {
+            val out = ArrayList<Dash>()
+            var x = s.left
+            while (x <= s.right) {
+                if (!bin[x, y]) { x++; continue }
+                var e = x
+                while (e <= s.right && bin[e, y]) e++
+                // a dash: short, and thin (nothing a little above and below it, also beside its ends:
+                // the strokes of letters go up and down)
+                val pad = (0.2 * d).roundToInt()
+                val thin = ((0.3 * d).roundToInt()..(0.7 * d).roundToInt()).all { k ->
+                    (x - pad until e + pad).none { bin[it, y - k] || bin[it, y + k] }
+                }
+                if (e - x in minDash..maxDash.toInt() && thin) out += Dash(x, e - 1, y)
+                x = e
+            }
+            return out
+        }
+        for (above in listOf(true, false)) {
+            val ys = if (above) (s.top(s.left.toDouble()) - 7 * d).roundToInt()..(s.top(s.left.toDouble()) - 1.0 * d).roundToInt()
+            else (s.bottom(s.left.toDouble()) + 1.0 * d).roundToInt()..(s.bottom(s.left.toDouble()) + 7 * d).roundToInt()
+            var y = ys.first
+            while (y <= ys.last) {
+                val dashes = dashesAt(y)
+                // runs of dashes, evenly apart
+                var i = 0
+                var found = false
+                while (i < dashes.size) {
+                    var j = i
+                    while (j + 1 < dashes.size && dashes[j + 1].x0 - dashes[j].x1 <= 2.0 * d) j++
+                    // evenly: dashes of about one length, at about one distance
+                    val run = dashes.subList(i, j + 1)
+                    val lengths = run.map { it.x1 - it.x0 }.sorted()
+                    val gaps = run.zipWithNext { a, b -> b.x0 - a.x1 }.sorted()
+                    val even = run.size >= 5 && lengths.last() <= 1.7 * lengths[lengths.size / 2] + 1 &&
+                        gaps.last() <= 1.8 * gaps[gaps.size / 2] + 1 && gaps.first() >= 0.5 * gaps[gaps.size / 2] - 1
+                    if (even) {
+                        val first = dashes[i]
+                        val last = dashes[j]
+                        val fy = first.y.toDouble()
+                        // the "8va" / "(8)" / "8vb" before it: a sign of about a digit's height, at the line's height
+                        val mark = glyphs.filter { c ->
+                            c.x1 <= first.x0 + 0.2 * d && first.x0 - c.x1 <= 2.5 * d && c.height.toDouble() in 0.8 * d..2.4 * d &&
+                                (if (above) c.y1 >= fy - 0.5 * d && c.y0 <= fy + 0.5 * d else c.y0 <= fy + 0.5 * d && c.y1 >= fy - 1.5 * d)
+                        }.minByOrNull { first.x0 - it.x1 }
+                        if (mark != null) {
+                            // the hook at its end (the note under it is still played higher)
+                            var end = last.x1
+                            for (x in last.x1..(last.x1 + d).toInt()) {
+                                val hook = (1..(0.6 * d).toInt()).count { k -> bin[x, if (above) last.y + k else last.y - k] }
+                                if (hook >= 0.4 * d) end = x
+                            }
+                            lines += Triple(mark.x0.toDouble(), end + 0.8 * d, if (above) 12 else -12)
+                            found = true
+                        }
+                    }
+                    i = j + 1
+                }
+                // (one line once, not again for each of its rows)
+                y += if (found) (d).roundToInt() else 1
+            }
+        }
+        return lines
+    }
+
+    /**
+     * A clef within a line (usually smaller than at the start): a treble clef reaches above and
+     * below the staff, a bass clef hangs from the top line and has two dots on its right.
+     */
+    private fun clefChange(c: Component, glyphs: List<Component>, used: BooleanArray, s: Staff, d: Double): Clef? {
+        val top = s.top(c.cx)
+        val bottom = s.bottom(c.cx)
+        val w = c.width.toDouble()
+        val h = c.height.toDouble()
+        // (it reaches about as far above the staff as below it; two notes an octave apart on one
+        // stem reach out on one side)
+        val above = top - c.y0
+        val below = c.y1 - bottom
+        if (h in 4.0 * d..8.0 * d && w in 0.9 * d..2.6 * d && above >= 0.3 * d && below >= 0.2 * d &&
+            min(above, below) >= 0.35 * max(above, below) && c.fill in 0.1..0.5) return Clef.TREBLE
+        if (h in 1.9 * d..3.8 * d && w in 1.2 * d..3.0 * d && abs(c.y0 - top) <= 0.6 * d && c.y1 < bottom - 0.2 * d && c.fill in 0.12..0.55) {
+            val fLine = s.lineY(1, c.cx)
+            // (the dots may have been taken for the dot of a note that the clef was taken for)
+            val dots = glyphs.filter { o ->
+                o.x0 >= c.x1 - 0.1 * d && o.x0 <= c.x1 + 0.9 * d && max(o.width, o.height) <= 0.6 * d && abs(o.cy - fLine) <= 0.8 * d
+            }
+            if (dots.size >= 2 && dots.any { it.cy < fLine } && dots.any { it.cy > fLine }) {
+                for (o in dots) used[o.id] = true
+                return Clef.BASS
+            }
+        }
+        return null
+    }
+
+    private fun assignPitches(items: List<Item>, staff: Staff, startClef: Clef, key: Int, changes: List<Pair<Double, Clef>> = emptyList()) {
         // diatonic number (octave * 7 + letter) of the bottom line
-        val base = when (clef) {
+        fun baseOf(clef: Clef) = when (clef) {
             Clef.TREBLE -> 4 * 7 + 2 // E4
             Clef.BASS -> 2 * 7 + 4   // G2
             Clef.ALTO -> 3 * 7 + 3   // F3
@@ -1674,6 +1923,8 @@ object Omr {
         val local = HashMap<Int, Int>()
         for (it in items) {
             if (it.measure != measure) { measure = it.measure; local.clear() }
+            val clef = changes.lastOrNull { c -> c.first < it.x }?.second ?: startClef
+            val base = baseOf(clef)
             it.pitches = it.heads.map { h ->
                 val dia = base + staff.stepAt(h.cx, h.cy)
                 h.accidental?.let { a -> local[dia] = a }
