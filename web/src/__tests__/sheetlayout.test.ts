@@ -40,7 +40,18 @@ describe('cutting a sheet between its systems', () => {
   });
 
   it('puts a tablature to the system above it', () => {
-    expect(musicRows([[100, 200, 900, 240]], [[90, 270, 910, 330]], 10)).toEqual([[100, 200, 900, 330]]);
+    expect(musicRows([{ box: [100, 200, 900, 240], system: 0, clef: 'TREBLE' }], [[90, 270, 910, 330]], 10)).toEqual([[100, 200, 900, 330]]);
+  });
+
+  it('keeps the two staves of a piano together, also when taken for two systems', () => {
+    const st = (top: number, system: number, clef: string) => ({ box: [100, top, 900, top + 40] as [number, number, number, number], system, clef });
+    // a piano system read right (gap 60), then one whose brace was not found (gap 70), then
+    // a treble staff far below (the next system)
+    expect(musicRows([st(0, 0, 'TREBLE'), st(100, 0, 'BASS'), st(300, 1, 'TREBLE'), st(410, 2, 'BASS'), st(650, 3, 'TREBLE')], [], 10))
+      .toEqual([[100, 0, 900, 140], [100, 300, 900, 450], [100, 650, 900, 690]]);
+    // without any system of two staves: piano staves are less than 9 staff spaces apart
+    expect(musicRows([st(0, 0, 'TREBLE'), st(80, 1, 'BASS'), st(300, 2, 'TREBLE'), st(380, 3, 'BASS')], [], 10))
+      .toEqual([[100, 0, 900, 120], [100, 300, 900, 420]]);
   });
 });
 

@@ -81,7 +81,7 @@ async function geometryOf(sheet: Sheet): Promise<{ picture: Blob; g: SheetGeomet
     if (rec) picture = rec.page;
     measured = shown.width;
     staffSpace = shown.result.staffSpace;
-    rows = musicRows(shown.result.score.systems.map((s) => s.box), shown.result.tabs ?? [], staffSpace);
+    rows = musicRows(shown.result.score.staves, shown.result.tabs ?? [], staffSpace);
   } catch {
     // not recognized: the picture as it is
   }

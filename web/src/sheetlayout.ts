@@ -36,9 +36,34 @@ export interface Cut { x0: number; y0: number; x1: number; y1: number }
 /** A cut placed on a page (millimetres from the top left corner of the page). */
 export interface Placed { sheet: number; cut: Cut; x: number; y: number; w: number; h: number }
 
-/** The music rows of a sheet: systems, each with the tablatures right below it. */
-export function musicRows(systems: Box[], tabs: Box[], staffSpace: number): Box[] {
-  const rows = systems.map((b) => [...b] as Box).sort((a, b) => a[1] - b[1]);
+/** A staff as the recognition gives it: its box, its system, its clef. */
+export interface StaffBox { box: Box; system: number; clef: string }
+
+/**
+ * The music rows of a sheet: systems, each with the tablatures right below it. The two staves
+ * of a piano (treble above bass) always stay together, also when the recognition took them for
+ * two systems (in photos the brace joining them is often not found): a treble staff and a bass
+ * staff right below it, as near as the staves within the other systems (or, without such, as
+ * near as piano staves are), make one row.
+ */
+export function musicRows(staves: StaffBox[], tabs: Box[], staffSpace: number): Box[] {
+  const bySystem = new Map<number, StaffBox[]>();
+  for (const st of staves) bySystem.set(st.system, [...(bySystem.get(st.system) ?? []), st]);
+  const groups = [...bySystem.values()].map((g) => g.sort((a, b) => a.box[1] - b.box[1])).sort((a, b) => a[0].box[1] - b[0].box[1]);
+  // distances between the staves within a system
+  const inner = groups.flatMap((g) => g.slice(1).map((st, k) => st.box[1] - g[k].box[3])).sort((a, b) => a - b);
+  const near = inner.length > 0 ? 1.4 * inner[Math.floor(inner.length / 2)] : 9 * staffSpace;
+  const joined: StaffBox[][] = [];
+  for (const g of groups) {
+    const prev = joined[joined.length - 1];
+    const last = prev?.[prev.length - 1];
+    if (last && last.clef === 'TREBLE' && g[0].clef === 'BASS' && prev.length === 1 && g[0].box[1] - last.box[3] <= near) prev.push(...g);
+    else joined.push([...g]);
+  }
+  const rows = joined.map((g): Box => [
+    Math.min(...g.map((s) => s.box[0])), Math.min(...g.map((s) => s.box[1])),
+    Math.max(...g.map((s) => s.box[2])), Math.max(...g.map((s) => s.box[3])),
+  ]);
   for (const t of tabs) {
     const above = rows.filter((r) => r[1] < t[1] && t[1] - r[3] < 16 * staffSpace).sort((a, b) => b[1] - a[1])[0];
     if (above) {
