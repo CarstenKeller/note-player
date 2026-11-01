@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { offerFor, repeatsOf } from '../repeats';
+import { offerFor, repeatsOf, unfoldRepeats } from '../repeats';
+import type { PieceScore } from '../score';
 
 describe('repeats', () => {
   // sheet 0: start before measure 1 of line 1; sheet 2: end in line 3 with a first ending,
@@ -28,5 +29,42 @@ describe('repeats', () => {
     expect(offerFor(r, on(2, 3), new Set())).toEqual({ kind: 'back', repeat: 0 });
     expect(offerFor(r, on(2, 3), new Set([0]))).toEqual({ kind: 'second', repeat: 0 });
     expect(offerFor(r, on(1, 0), new Set())).toBeNull();
+  });
+});
+
+describe('playing the repeats', () => {
+  // one line of four measures, one note each (pitch 60 + measure), the third tied over from the second
+  const piece = (): PieceScore => ({
+    tpq: 480,
+    events: [0, 1, 2, 3].map((m) => ({
+      start: m * 1920, duration: 1920, pitches: [60 + m], holds: m === 1 ? [60] : [], box: [100 + m * 200, 0, 150 + m * 200, 10] as [number, number, number, number],
+      staff: 0, system: 0, measure: m, sheet: 0, kind: 'note' as const,
+    })),
+    systems: [{ index: 0, box: [0, 0, 1000, 10], start: 0, end: 7680, sheet: 0 }],
+    bassStaves: [],
+    totalTicks: 7680,
+    tempos: [{ tick: 0, bpm: 100 }, { tick: 3840, bpm: 80 }],
+  });
+  const order = (s: PieceScore) => s.events.map((e) => `${e.start / 1920}:${e.pitches[0] - 60}`).join(' ');
+
+  it('plays the repeated measures again', () => {
+    const marks = [[{ start: true, x: 290, staff: 0, system: 0, measure: 1 }, { start: false, x: 690, staff: 0, system: 0, measure: 2 }]];
+    const s = unfoldRepeats(piece(), repeatsOf(marks));
+    expect(order(s)).toBe('0:0 1:1 2:2 3:1 4:2 5:3');
+    expect(s.totalTicks).toBe(6 * 1920);
+    // after the jump back the first note is struck (not held over)
+    expect(s.events[3].holds).toEqual([]);
+    // the tempo: 80 from the third measure; back in the second measure it is 100 again
+    expect(s.tempos).toEqual([{ tick: 0, bpm: 100 }, { tick: 3840, bpm: 80 }, { tick: 5760, bpm: 100 }, { tick: 7680, bpm: 80 }, { tick: 9600, bpm: 80 }]);
+  });
+
+  it('leaves out the first ending the second time', () => {
+    const marks = [[{ start: true, x: 290, staff: 0, system: 0, measure: 1 }, { start: false, x: 690, staff: 0, system: 0, measure: 2, firstEnding: 490 }]];
+    expect(order(unfoldRepeats(piece(), repeatsOf(marks)))).toBe('0:0 1:1 2:2 3:1 4:3');
+  });
+
+  it('without repeat signs the piece stays as it is', () => {
+    const p = piece();
+    expect(unfoldRepeats(p, [])).toBe(p);
   });
 });

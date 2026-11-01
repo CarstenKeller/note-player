@@ -9,7 +9,7 @@ import { linesFromPieces, type TextLine, type TextPiece } from '../guitar/text';
 import { readTabStaves, readTuning, type TabRead } from '../guitar/tabs';
 import { STRINGS } from '../guitar/chords';
 import { keepAwake } from '../wakelock';
-import { offerFor, repeatsOf, type JumpOffer, type Spot } from '../repeats';
+import { offerFor, repeatsOf, unfoldRepeats, type JumpOffer, type Spot } from '../repeats';
 import { download } from '../backup';
 import { pdfName, piecePdf } from '../pdfexport';
 import { PieceDialog } from './PieceDialog';
@@ -183,7 +183,11 @@ export function PieceView(props: { piece: Piece; allCategories: string[]; allArt
   /** Semitones a capo adds (guitar mode). */
   const capoShift = guitar && capo && gs.capo !== false ? capo : 0;
 
-  const score: PieceScore = useMemo(() => joinSheets(sheets.map((s, i): SheetPart | null => {
+  /** The repeats of the piece (repeat signs read from the sheets). */
+  const repeats = useMemo(() => repeatsOf(sheets.map((s) => s.shown?.result.repeats)), [sheets]);
+
+  /** The music as it is written (each measure once). */
+  const written: PieceScore = useMemo(() => joinSheets(sheets.map((s, i): SheetPart | null => {
     if (!s.shown) return null;
     const r = s.shown.result;
     const notes = includeVocals ? r.score : r.withoutVocals;
@@ -212,6 +216,8 @@ export function PieceView(props: { piece: Piece; allCategories: string[]; allArt
     const octave = (r.tabs?.length ?? 0) > 0 ? -12 : 0;
     return { score: notes, notes: gs.melody, transpose: octave + capoShift, extra, length: g?.length, tempos };
   })), [sheets, includeVocals, guitar, guitarSheets, tabReads, chordsOn, gs.melody, gs.strum, capoShift, marks]);
+  /** The music as it is played: with its repeats. */
+  const score: PieceScore = useMemo(() => unfoldRepeats(written, repeats), [written, repeats]);
 
   /** The tempo: from the marks on the sheet (scaled by the base tempo and %), else constant. */
   const tempo = useMemo(() => {
@@ -250,8 +256,6 @@ export function PieceView(props: { piece: Piece; allCategories: string[]; allArt
   /** Measure number of a place (0: not known). */
   const measureAt = (p: Spot) => measureNumbers.get(`${p.sheet}/${p.system}/${p.measure}`) ?? 0;
 
-  /** The repeats of the piece (repeat signs read from the sheets). */
-  const repeats = useMemo(() => repeatsOf(sheets.map((s) => s.shown?.result.repeats)), [sheets]);
 
   const crops: Crop[] = useMemo(() => sheets.map((s, i) => {
     const shown = s.shown;
@@ -360,7 +364,10 @@ export function PieceView(props: { piece: Piece; allCategories: string[]; allArt
     if (!el || !shown) return null;
     const scale = el.clientWidth / shown.width;
     const top = crops[sheet].top;
-    return { top: el.offsetTop + (b[1] - top) * scale, bottom: el.offsetTop + (b[3] - top) * scale };
+    // the page's place in the scrolling content (not offsetTop: that depends on which element
+    // around it is positioned)
+    const pageTop = inner.current ? el.getBoundingClientRect().top - inner.current.getBoundingClientRect().top : el.offsetTop;
+    return { top: pageTop + (b[1] - top) * scale, bottom: pageTop + (b[3] - top) * scale };
   };
 
   // --- scroll mode ----------------------------------------------------------------------
@@ -410,7 +417,17 @@ export function PieceView(props: { piece: Piece; allCategories: string[]; allArt
     if (!c || !b || !shown) return;
     const on = boxOnScreen(p.sheet, b);
     // (a place in a line already on the screen: no scrolling)
-    if (on && (on.top < c.scrollTop || on.bottom > c.scrollTop + c.clientHeight)) c.scrollTo({ top: on.top - c.clientHeight * 0.1, behavior: 'smooth' });
+    if (on && (on.top < c.scrollTop || on.bottom > c.scrollTop + c.clientHeight)) {
+      // at once: a gliding scroll would be taken over by the scroll mode or by the swing of a
+      // swipe that still goes on (iPad); hiding the overflow for a moment stops that swing
+      const target = Math.max(0, on.top - c.clientHeight * 0.1);
+      c.style.overflowY = 'hidden';
+      c.scrollTop = target;
+      requestAnimationFrame(() => {
+        c.style.overflowY = '';
+        c.scrollTop = target;
+      });
+    }
     const ss = shown.result.staffSpace;
     const x = p.x > 0 ? p.x : b[0];
     setFlash({ sheet: p.sheet, box: [x - 0.3 * ss, b[1], Math.min(b[2], x + width * ss), b[3]] });
@@ -439,7 +456,8 @@ export function PieceView(props: { piece: Piece; allCategories: string[]; allArt
     // the music lets the last line move up); without recognized music, a screen in two minutes
     const pixelsPerSecond = () => {
       const travel = Math.max(1, c.scrollHeight - c.clientHeight * 0.6);
-      const seconds = score.totalTicks > 0 ? secondsOf(score.totalTicks, scrollBpm, score.tpq) : 120 * (inner.current!.clientHeight / c.clientHeight);
+      // (the music as written: the page is scrolled once, repeats are jumped to by hand)
+      const seconds = written.totalTicks > 0 ? secondsOf(written.totalTicks, scrollBpm, written.tpq) : 120 * (inner.current!.clientHeight / c.clientHeight);
       return travel / Math.max(10, seconds);
     };
     let pos = c.scrollTop;
@@ -465,7 +483,7 @@ export function PieceView(props: { piece: Piece; allCategories: string[]; allArt
       cancelAnimationFrame(frame);
       keepAwake(false);
     };
-  }, [scrolling, scrollBpm, score, zoom]);
+  }, [scrolling, scrollBpm, written, zoom]);
 
   const switchMode = (m: Mode) => {
     if (m === mode) return;

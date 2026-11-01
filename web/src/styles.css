@@ -217,14 +217,17 @@ input[type='checkbox'] { width: 24px; height: 24px; }
   left: 50%;
   transform: translateX(-50%);
   z-index: 5;
-  min-height: 52px;
-  padding: 0 22px;
-  border-radius: 26px;
-  font-size: 17px;
-  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.25);
+  min-height: 72px;
+  min-width: min(420px, calc(100vw - 32px));
+  padding: 0 32px;
+  border-radius: 36px;
+  font-size: 21px;
+  font-weight: 600;
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.3);
   white-space: nowrap;
+  touch-action: manipulation;
 }
-.jump-button span { font-size: 22px; margin-right: 4px; }
+.jump-button span { font-size: 28px; margin-right: 6px; vertical-align: -2px; }
 .start-chip { background: #e3eef9; border-color: rgba(31, 120, 200, 0.6); }
 .hint { white-space: nowrap; }
 .placeholder { padding: 48px 24px; color: var(--muted); text-align: center; }
