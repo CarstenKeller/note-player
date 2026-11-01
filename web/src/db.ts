@@ -9,6 +9,11 @@ export interface Piece {
   id: string;
   name: string;
   created: number;
+  /**
+   * When name, performer, sections, favourite or sheets were last changed (for sharing the
+   * library between devices: the newer change wins). Not set: [created].
+   */
+  modified?: number;
   /** When the piece was last opened (for sorting). */
   opened: number;
   categories: string[];
@@ -187,15 +192,22 @@ export const db = {
     return done((await store('pieces')).getAll()) as Promise<Piece[]>;
   },
   piece: (id: string) => get<Piece>('pieces', id),
-  async savePiece(p: Piece): Promise<void> {
+  /** [modified]: the time of the change (taken over from another device); else now, if it is one. */
+  async savePiece(p: Piece, modified?: number): Promise<void> {
     const old = await get<Piece>('pieces', p.id);
-    await put('pieces', p);
-    if (!old || essentials(old) !== essentials(p)) significantChange();
+    const changed = !old || essentials(old) !== essentials(p);
+    await put('pieces', { ...p, modified: modified ?? (changed ? Date.now() : (old?.modified ?? p.modified)) });
+    if (changed) significantChange();
   },
-  async deletePiece(p: Piece): Promise<void> {
+  /** [time]: when it was deleted (taken over from another device); else now. */
+  async deletePiece(p: Piece, time = Date.now()): Promise<void> {
     for (const s of p.sheets) await db.deleteSheet(s);
     await del('pieces', p.id);
     await del('covers', p.id);
+    // remembered, so that sharing the library deletes it on the other devices too
+    const deleted = (await db.setting<Record<string, number>>('deleted')) ?? {};
+    deleted[p.id] = Math.max(deleted[p.id] ?? 0, time);
+    await db.saveSetting('deleted', deleted);
     significantChange();
   },
 

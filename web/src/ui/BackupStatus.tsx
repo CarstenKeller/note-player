@@ -3,7 +3,7 @@ import {
   canWriteAutomatically, chooseFile, forgetFile, manualMethod, saveNow, setManualMethod, subscribe,
   type BackupState, type ManualMethod,
 } from '../autobackup';
-import { importAll } from '../backup';
+import { exportAll, importAll, libraryFileName, shareFile } from '../backup';
 import { db } from '../db';
 import { Icon, IconButton } from './Icon';
 
@@ -57,20 +57,50 @@ function BackupDialog(props: { state: BackupState; onClose: () => void; onRestor
     const f = input.files?.[0];
     input.value = '';
     if (!f) return;
-    setNote('Sicherung wird gelesen …');
+    setNote('Die Bibliothek wird übernommen …');
     try {
-      const n = await importAll(f);
-      setNote(n === 1 ? '1 Stück übernommen.' : `${n} Stücke übernommen (vorhandene bleiben unverändert).`);
+      const r = await importAll(f);
+      const parts = [
+        r.added > 0 && (r.added === 1 ? '1 Stück neu' : `${r.added} Stücke neu`),
+        r.updated > 0 && (r.updated === 1 ? '1 Stück aktualisiert' : `${r.updated} Stücke aktualisiert`),
+        r.removed > 0 && (r.removed === 1 ? '1 Stück gelöscht' : `${r.removed} Stücke gelöscht`),
+      ].filter(Boolean);
+      setNote(parts.length > 0 ? parts.join(', ') + '.' : 'Alles war schon auf dem neuesten Stand.');
       props.onRestored?.();
     } catch (e) {
-      setNote('Die Sicherung konnte nicht gelesen werden: ' + (e as Error).message);
+      setNote('Die Datei konnte nicht gelesen werden: ' + (e as Error).message);
+    }
+  };
+
+  // sharing the library: the file is made first; the share sheet may need a second tap
+  const [sharing, setSharing] = useState<{ step: 'making' } | { step: 'ready'; blob: Blob; name: string } | null>(null);
+  const [shareNote, setShareNote] = useState<string | null>(null);
+  const offer = async (blob: Blob, name: string) => {
+    const r = await shareFile(blob, name);
+    if (r === 'tap again') {
+      setSharing({ step: 'ready', blob, name });
+      return;
+    }
+    setSharing(null);
+    setShareNote(r === 'downloaded'
+      ? `„${name}“ liegt jetzt bei den Downloads. In WhatsApp: Anhängen → Dokument → die Datei wählen.`
+      : r === 'shared' ? 'Geteilt.' : null);
+  };
+  const share = async () => {
+    setShareNote(null);
+    setSharing({ step: 'making' });
+    try {
+      await offer(await exportAll(), libraryFileName());
+    } catch (e) {
+      setSharing(null);
+      setShareNote('Teilen nicht möglich: ' + (e as Error).message);
     }
   };
 
   return (
     <div class="overlay" onClick={props.onClose}>
       <div class="dialog" onClick={(e) => e.stopPropagation()}>
-        <h2>Sicherung</h2>
+        <h2>Sicherung und Teilen</h2>
 
         <div class={'backup-line ' + state.status}>
           <span class="backup-symbol"><Icon name={state.status === 'ok' ? 'check' : state.status === 'saving' ? 'sync' : 'warn'} /></span>
@@ -118,12 +148,26 @@ function BackupDialog(props: { state: BackupState; onClose: () => void; onRestor
         </div>
 
         <div class="field">
-          <strong>Sicherung laden</strong>
-          <span class="muted">Übernimmt die Stücke aus einer Sicherungsdatei, z. B. auf einem neuen Gerät. Vorhandene Stücke bleiben unverändert.</span>
+          <strong>Bibliothek mit anderen Geräten teilen</strong>
+          <span class="muted">
+            „Bibliothek teilen“ schickt alle Stücke als eine Datei, z. B. per WhatsApp an dich selbst.
+            Auf dem anderen Gerät die Datei speichern und mit „Bibliothek übernehmen“ öffnen: Neue
+            Stücke kommen dazu, bei Stücken, die auf beiden Geräten geändert wurden, gilt die neuere
+            Änderung, und gelöschte Stücke werden auch dort gelöscht. Auch eine Sicherungsdatei lässt
+            sich so übernehmen.
+          </span>
           <div class="row">
-            <button onClick={() => restoreInput.current?.click()}>Sicherungsdatei wählen …</button>
-            <input ref={restoreInput} type="file" accept=".zip,application/zip" hidden onChange={(e) => void restore(e.currentTarget)} />
+            {sharing?.step === 'ready' ? (
+              <button class="primary" onClick={() => void offer(sharing.blob, sharing.name)}>Jetzt teilen</button>
+            ) : (
+              <button onClick={() => void share()} disabled={sharing?.step === 'making'}>
+                {sharing?.step === 'making' ? 'Datei wird erstellt …' : 'Bibliothek teilen …'}
+              </button>
+            )}
+            <button onClick={() => restoreInput.current?.click()}>Bibliothek übernehmen …</button>
+            <input ref={restoreInput} type="file" hidden onChange={(e) => void restore(e.currentTarget)} />
           </div>
+          {shareNote && <span class="muted">{shareNote}</span>}
           {note && <span class="muted">{note}</span>}
         </div>
 
