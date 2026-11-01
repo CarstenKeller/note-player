@@ -5,6 +5,7 @@ import {
 } from '../autobackup';
 import { exportAll, importAll, libraryFileName, shareFile } from '../backup';
 import { db } from '../db';
+import { librarySize, optimizePhotos, type LibrarySize } from '../optimize';
 import { Icon, IconButton } from './Icon';
 
 const when = (t?: number) =>
@@ -33,6 +34,9 @@ export function BackupStatus(props: { settings?: boolean; onRestored?: () => voi
     </>
   );
 }
+
+/** Bytes as megabytes, for people. */
+const mb = (bytes: number) => `${(bytes / 1e6).toLocaleString('de-DE', { maximumFractionDigits: bytes < 1e7 ? 1 : 0 })} MB`;
 
 function BackupDialog(props: { state: BackupState; onClose: () => void; onRestored?: () => void }) {
   const { state } = props;
@@ -69,6 +73,28 @@ function BackupDialog(props: { state: BackupState; onClose: () => void; onRestor
       props.onRestored?.();
     } catch (e) {
       setNote('Die Datei konnte nicht gelesen werden: ' + (e as Error).message);
+    }
+  };
+
+  // how much the library takes; making the photos smaller
+  const [size, setSize] = useState<LibrarySize | null>(null);
+  const [optimizing, setOptimizing] = useState<string | null>(null);
+  const [optimizeNote, setOptimizeNote] = useState<string | null>(null);
+  useEffect(() => void librarySize().then(setSize), []);
+  const optimize = async () => {
+    setOptimizeNote(null);
+    try {
+      const r = await optimizePhotos((done, of) => setOptimizing(of === 0 ? 'Keine Fotos zu prüfen …' : `Foto ${Math.min(done + 1, of)} von ${of} wird geprüft …`));
+      setOptimizeNote(r.smaller + r.kept === 0
+        ? 'Alle Fotos sind schon geprüft.'
+        : `${r.smaller} von ${r.smaller + r.kept} Fotos verkleinert: ${mb(r.before)} → ${mb(r.after)}.` +
+          (r.kept > 0 ? ` ${r.kept === 1 ? '1 bleibt' : `${r.kept} bleiben`}, wie ${r.kept === 1 ? 'es ist' : 'sie sind'} (Kamerafoto: verlustfrei nicht kleiner; oder die Erkennung wäre nicht genau dieselbe).` : ''));
+    } catch (e) {
+      setOptimizeNote('Nicht möglich: ' + (e as Error).message);
+    } finally {
+      setOptimizing(null);
+      setSize(await librarySize());
+      props.onRestored?.();
     }
   };
 
@@ -145,6 +171,31 @@ function BackupDialog(props: { state: BackupState; onClose: () => void; onRestor
               </label>
             </>
           )}
+        </div>
+
+        <div class="field">
+          <strong>Speicher</strong>
+          {size ? (
+            <span class="muted">
+              {size.pieces === 1 ? '1 Stück' : `${size.pieces} Stücke`}: {mb(size.photos + size.originals + size.pdfPages + size.recognized + size.covers)} –
+              Fotos und Bilder {mb(size.photos)}, Original-PDFs {mb(size.originals)}, PDF-Seiten als Bild {mb(size.pdfPages)},
+              erkannte Seiten {mb(size.recognized)}, Kachelbilder {mb(size.covers)}.
+              {' '}Die Datei zum Teilen enthält davon etwa {mb(size.photos + size.originals)} (PDF-Seiten und erkannte Seiten werden auf dem anderen Gerät neu erzeugt).
+              {size.usage !== undefined && <> Der Browser zählt für die App insgesamt {mb(size.usage)}.</>}
+            </span>
+          ) : <span class="muted">Wird berechnet …</span>}
+          <span class="muted">
+            „Fotos verkleinern“ speichert Screenshots und als PNG gespeicherte Bilder so, wie die
+            Erkennung sie liest: in Graustufen, ohne Verlust und nicht größer als die Auflösung, mit
+            der sie arbeitet – die Erkennung sieht danach dieselben Bildpunkte. Jedes Bild wird zur
+            Sicherheit neu erkannt und nur ersetzt, wenn Note für Note dasselbe herauskommt.
+            Kamerafotos (JPEG) wären so nicht kleiner und bleiben, wie sie sind. „Original sichern“
+            liefert danach das Graustufenbild.
+          </span>
+          <div class="row">
+            <button onClick={() => void optimize()} disabled={optimizing !== null}>{optimizing ?? 'Fotos verkleinern …'}</button>
+          </div>
+          {optimizeNote && <span class="muted">{optimizeNote}</span>}
         </div>
 
         <div class="field">

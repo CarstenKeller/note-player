@@ -62,6 +62,8 @@ export interface Sheet {
   h?: number;
   /** Text on the sheet with positions in the picture (PDF text layer or pasted text). */
   text?: TextPiece[];
+  /** A photo already made smaller (or tried: it stays as it is), see optimize.ts. */
+  optimized?: boolean;
   /** The page of an imported PDF this sheet is (number from 1), kept in the original file. */
   source?: { original: string; page: number };
 }

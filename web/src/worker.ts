@@ -2,6 +2,7 @@
 // blocking the page.
 
 import { WebOmr } from 'omr-core';
+import { maxSideFor } from './worksize';
 
 const omr = WebOmr.getInstance();
 
@@ -14,17 +15,6 @@ export type Response =
   | { id: number; ok: true; width?: number; height?: number; page?: Blob; json?: string; audio?: Float32Array; rate?: number }
   | { id: number; ok: false; error: string };
 
-const MAX_PIXELS = 16_000_000;
-
-/** The working size, as in the Android app: photos keep at least 2400 px on their short side. */
-function maxSideFor(width: number, height: number): number {
-  const long = Math.max(width, height);
-  const short = Math.min(width, height);
-  if (long <= 2400) return 2400;
-  const keepShort = Math.floor(long * Math.min(1, 2400 / short));
-  const pixelLimit = Math.floor(Math.sqrt((MAX_PIXELS * long) / short));
-  return Math.max(2400, Math.min(keepShort, pixelLimit));
-}
 
 /** Recordings by kind (piano, guitar). */
 const samples = new Map<string, { pitches: number[]; data: Float32Array[]; rate: number }>();

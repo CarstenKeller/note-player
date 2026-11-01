@@ -70,6 +70,12 @@ export async function recognizeSheet(sheetId: string): Promise<ShownSheet> {
   return toShown(rec);
 }
 
+/** Recognizes a picture without keeping the result (to compare two versions of a sheet). */
+export async function recognizeBlob(blob: Blob): Promise<{ width: number; height: number; page: Blob; json: string }> {
+  const r = await call({ type: 'recognize', blob });
+  return { width: r.width!, height: r.height!, page: r.page!, json: r.json! };
+}
+
 export function sendSamples(kind: SampleKind, pitches: number[], data: Float32Array[], rate: number) {
   samples.set(kind, { pitches, data, rate });
   return call({ type: 'samples', kind, pitches, data, rate });
