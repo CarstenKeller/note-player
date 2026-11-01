@@ -14,16 +14,23 @@ export function baseName(name: string): string {
   return name.replace(/\.[^.]+$/, '').replace(/[_]+/g, ' ').trim();
 }
 
-async function pdfPages(file: File, original: string, progress: Progress): Promise<Sheet[]> {
-  progress('PDF wird geöffnet …');
+/** A page of a PDF drawn as a picture (JPEG), with the text on it in the picture's pixels. */
+export interface RenderedPage { page: number; blob: Blob; w: number; h: number; text: TextPiece[] }
+
+/**
+ * Draws pages of a PDF ([pages] numbered from 1; all if not given), always in the same way: a
+ * page drawn again from the PDF is the same as when it was imported.
+ */
+export async function renderPdfPages(data: Uint8Array, pages?: number[], progress?: (n: number, of: number) => void): Promise<RenderedPage[]> {
   // loaded only when needed (large)
   const pdfjs = await import('pdfjs-dist/legacy/build/pdf.mjs');
   pdfjs.GlobalWorkerOptions.workerSrc = (await import('pdfjs-dist/legacy/build/pdf.worker.min.mjs?url')).default;
-  const doc = await pdfjs.getDocument({ data: new Uint8Array(await file.arrayBuffer()) }).promise;
-  const sheets: Sheet[] = [];
+  const doc = await pdfjs.getDocument({ data }).promise;
+  const out: RenderedPage[] = [];
   try {
-    for (let n = 1; n <= doc.numPages; n++) {
-      progress(`PDF-Seite ${n} von ${doc.numPages} wird gelesen …`);
+    const wanted = pages ?? Array.from({ length: doc.numPages }, (_, i) => i + 1);
+    for (const [k, n] of wanted.entries()) {
+      progress?.(k + 1, wanted.length);
       const page = await doc.getPage(n);
       const unit = page.getViewport({ scale: 1 });
       const scale = PDF_SHORT_SIDE / Math.min(unit.width, unit.height);
@@ -50,14 +57,22 @@ async function pdfPages(file: File, original: string, progress: Progress): Promi
       }
       const blob = await new Promise<Blob>((resolve, reject) =>
         canvas.toBlob((b) => (b ? resolve(b) : reject(new Error('Die PDF-Seite konnte nicht gezeichnet werden.'))), 'image/jpeg', 0.92));
-      sheets.push({ id: newId(), blob, name: `${baseName(file.name)} – Seite ${n}.jpg`, kind: 'pdf', w: canvas.width, h: canvas.height, text, source: { original, page: n } });
+      out.push({ page: n, blob, w: canvas.width, h: canvas.height, text });
       // free the canvas memory right away (Safari limits the total canvas size)
       canvas.width = canvas.height = 0;
     }
   } finally {
     void doc.destroy();
   }
-  return sheets;
+  return out;
+}
+
+async function pdfPages(file: File, original: string, progress: Progress): Promise<Sheet[]> {
+  progress('PDF wird geöffnet …');
+  const pages = await renderPdfPages(new Uint8Array(await file.arrayBuffer()), undefined, (n, of) => progress(`PDF-Seite ${n} von ${of} wird gelesen …`));
+  return pages.map((p) => ({
+    id: newId(), blob: p.blob, name: `${baseName(file.name)} – Seite ${p.page}.jpg`, kind: 'pdf' as const, w: p.w, h: p.h, text: p.text, source: { original, page: p.page },
+  }));
 }
 
 /** Stores the files as sheets (in the order given) and returns their ids. */

@@ -4,8 +4,12 @@
 
 import { unzipSync, zipSync, strToU8, strFromU8 } from 'fflate';
 import { db, type Original, type Piece, type Sheet } from './db';
+import { renderPdfPages } from './importer';
 
-/** A sheet in the backup: its picture is the file at [path]. */
+/**
+ * A sheet in the backup: its picture is the file at [path]; a page of a PDF that is in the file
+ * too has no picture ([path] empty): it is drawn from the PDF again (that saves the space twice).
+ */
 type SheetEntry = { id: string; name: string; type: string; path: string } & Pick<Sheet, 'kind' | 'w' | 'h' | 'text' | 'source'>;
 
 interface Manifest {
@@ -79,24 +83,27 @@ export async function exportAll(): Promise<Blob> {
     for (const id of p.sheets) {
       const s = await db.sheet(id);
       if (!s) continue;
-      const path = `blaetter/${id}.${extOf(s.blob.type)}`;
-      files[path] = new Uint8Array(await s.blob.arrayBuffer());
-      entry.files.push({ id, name: s.name, type: s.blob.type, path, kind: s.kind, w: s.w, h: s.h, text: s.text, source: s.source });
       if (s.source && !originals.has(s.source.original)) {
-        originals.add(s.source.original);
         const o = await db.original(s.source.original);
         if (o) {
+          originals.add(o.id);
           const opath = `originale/${o.id}.pdf`;
           files[opath] = new Uint8Array(await o.blob.arrayBuffer());
           manifest.originals!.push({ id: o.id, name: o.name, pages: o.pages, sheets: o.sheets, path: opath });
         }
       }
+      // a page of a PDF in the file: drawn from it again
+      const fromPdf = s.source !== undefined && originals.has(s.source.original);
+      const path = fromPdf ? '' : `blaetter/${id}.${extOf(s.blob.type)}`;
+      if (!fromPdf) files[path] = new Uint8Array(await s.blob.arrayBuffer());
+      entry.files.push({ id, name: s.name, type: s.blob.type, path, kind: s.kind, w: s.w, h: s.h, text: s.text, source: s.source });
     }
     manifest.pieces.push(entry);
   }
-  files['notenspieler.json'] = strToU8(JSON.stringify(manifest, null, 1));
-  // pictures are compressed already
-  return new Blob([zipSync(files, { level: 0 })], { type: 'application/zip' });
+  // pictures and PDFs are compressed already; the list (with the text of the pages) is not
+  const zipped: Record<string, Uint8Array | [Uint8Array, { level: 0 | 6 }]> = { ...files };
+  zipped['notenspieler.json'] = [strToU8(JSON.stringify(manifest)), { level: 6 }];
+  return new Blob([zipSync(zipped, { level: 0 })], { type: 'application/zip' });
 }
 
 /** What taking over a library file changed. */
@@ -127,9 +134,9 @@ export async function importAll(file: File): Promise<MergeResult> {
     if (cover && coverData) {
       await db.saveCover({ id: piece.id, source: 'own', query: '', time: Date.now(), blob: new Blob([coverData], { type: cover.type }) });
     }
+    const sheets: string[] = [];
     for (const f of list) {
-      const data = files[f.path];
-      if (!data || (await db.sheet(f.id))) continue;
+      if (await db.sheet(f.id)) { sheets.push(f.id); continue; }
       // the original PDF of the sheet, once
       const o = f.source && manifest.originals?.find((x) => x.id === f.source!.original);
       const odata = o && files[o.path];
@@ -137,12 +144,23 @@ export async function importAll(file: File): Promise<MergeResult> {
         restored.add(o.id);
         await db.saveOriginal({ id: o.id, name: o.name, pages: o.pages, sheets: o.sheets, blob: new Blob([odata], { type: 'application/pdf' }) });
       }
+      let data: Blob | null = files[f.path] ? new Blob([files[f.path]], { type: f.type }) : null;
+      let text = f.text;
+      if (!data && f.source && odata) {
+        // drawn from its PDF again, as when it was imported
+        const [page] = await renderPdfPages(odata.slice(), [f.source.page]);
+        if (page) {
+          data = page.blob;
+          text = f.text ?? page.text;
+        }
+      }
+      if (!data) continue;
       await db.saveSheet({
-        id: f.id, name: f.name, blob: new Blob([data], { type: f.type }),
-        kind: f.kind, w: f.w, h: f.h, text: f.text, source: odata || (f.source && (await db.original(f.source.original))) ? f.source : undefined,
+        id: f.id, name: f.name, blob: data,
+        kind: f.kind, w: f.w, h: f.h, text, source: odata || (f.source && (await db.original(f.source.original))) ? f.source : undefined,
       });
+      sheets.push(f.id);
     }
-    const sheets = list.filter((f) => files[f.path]).map((f) => f.id);
     // sheets of the old version that the new one no longer has
     if (mine) for (const id of mine.sheets) if (!sheets.includes(id)) await db.deleteSheet(id);
     await db.savePiece({ ...piece, opened: Math.max(piece.opened ?? 0, mine?.opened ?? 0), sheets }, changedAt(piece));
