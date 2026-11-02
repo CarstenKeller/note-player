@@ -23,14 +23,6 @@ export function sortedByTime<T extends { name: string; lastModified: number; web
     (byName ? naturally.compare(a.webkitRelativePath || a.name, b.webkitRelativePath || b.name) : 0));
 }
 
-/** Whether this browser can let the user choose a whole folder. */
-export function canChooseFolder(): boolean {
-  if (typeof window === 'undefined') return false;
-  if ('showDirectoryPicker' in window) return true;
-  // the older way (desktop browsers); phones and tablets mostly ignore it
-  return 'webkitdirectory' in document.createElement('input') && !/iPad|iPhone|Android/i.test(navigator.userAgent) && !(navigator.maxTouchPoints > 1 && /Macintosh/.test(navigator.userAgent));
-}
-
 type DirHandle = { name: string; values(): AsyncIterable<{ kind: string; name: string; getFile?: () => Promise<File> }> };
 
 /**
@@ -60,7 +52,8 @@ export async function chooseFolder(fallback: () => void): Promise<{ name: string
 
 /** The sheets of a folder chosen with the file input (webkitdirectory), sorted, with its name. */
 export function folderFromInput(list: File[]): { name: string; files: File[] } {
-  const files = sortedByTime(list.filter(isSheetFile));
+  // (where the browser can only choose files: photos without names of their own keep their order)
+  const files = importOrder(list.filter(isSheetFile));
   const name = files[0]?.webkitRelativePath?.split('/')[0] || '';
   return { name, files };
 }
