@@ -21,12 +21,13 @@ function App() {
   };
   useEffect(() => void refreshCategories(), [open]);
 
-  const importNew = async (files: File[]) => {
+  /** A new piece from files ([name]: of the folder they come from). */
+  const importNew = async (files: File[], name?: string) => {
     setError(null);
     setBusy('Die Dateien werden übernommen …');
     try {
       const sheets = await importFiles(files, setBusy);
-      const piece: Piece = { id: newId(), name: nameFor(files), created: Date.now(), opened: Date.now(), categories: [], sheets };
+      const piece: Piece = { id: newId(), name: name || nameFor(files), created: Date.now(), opened: Date.now(), categories: [], sheets };
       await db.savePiece(piece);
       setOpen(piece);
     } catch (e) {

@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'preact/hooks';
 import { db, persist, type Cover, type Piece } from '../db';
 import { updateCover } from '../covers';
+import { canChooseFolder, chooseFolder, folderFromInput, importOrder } from '../folder';
 import { BackupStatus } from './BackupStatus';
 import { Icon, IconButton } from './Icon';
 import { TextDialog } from './TextDialog';
@@ -29,7 +30,7 @@ export const COVER_SEARCH = 'coverSearch';
 /** The saved pieces: search, sections ("Rubriken"), and opening new sheets. */
 export function Library(props: {
   onOpen: (piece: Piece) => void;
-  onImport: (files: File[]) => void;
+  onImport: (files: File[], name?: string) => void;
   onText: (text: string, name: string) => void;
 }) {
   const [pieces, setPieces] = useState<Piece[]>([]);
@@ -146,7 +147,27 @@ export function Library(props: {
   const picked = (input: HTMLInputElement) => {
     const list = [...(input.files ?? [])];
     input.value = '';
-    if (list.length) props.onImport(list);
+    if (list.length) props.onImport(importOrder(list));
+  };
+  // a whole folder: its pictures and PDFs, sorted by their names, one piece named after it
+  const folderInput = useRef<HTMLInputElement>(null);
+  const takeFolder = (f: { name: string; files: File[] } | null) => {
+    if (!f) return;
+    if (f.files.length === 0) {
+      window.alert(`Im Ordner „${f.name}“ sind keine Bilder oder PDFs.`);
+      return;
+    }
+    props.onImport(f.files, f.name);
+  };
+  // (set on the element: as a property of the JSX it would end up switched off)
+  useEffect(() => {
+    folderInput.current?.setAttribute('webkitdirectory', '');
+    folderInput.current?.setAttribute('directory', '');
+  }, []);
+  const folderPicked = (input: HTMLInputElement) => {
+    const list = [...(input.files ?? [])];
+    input.value = '';
+    if (list.length) takeFolder(folderFromInput(list));
   };
 
   return (
@@ -157,6 +178,10 @@ export function Library(props: {
         <span class="spacer" />
         <IconButton class="primary" icon="camera" label="Foto" onClick={() => camera.current?.click()} />
         <IconButton class="primary" icon="open" label="Bilder / PDF" onClick={() => files.current?.click()} />
+        {canChooseFolder() && (
+          <IconButton class="primary" icon="folder" label="Ordner" onClick={() => void chooseFolder(() => folderInput.current?.click()).then(takeFolder)} />
+        )}
+        <input ref={folderInput} type="file" hidden onChange={(e) => folderPicked(e.currentTarget)} />
         <IconButton class="primary" icon="text" label="Text" onClick={() => setPasting(true)} />
         <input ref={camera} type="file" accept="image/*" capture="environment" hidden onChange={(e) => picked(e.currentTarget)} />
         <input ref={files} type="file" accept="image/*,application/pdf,.pdf" multiple hidden onChange={(e) => picked(e.currentTarget)} />

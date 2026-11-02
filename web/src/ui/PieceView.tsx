@@ -12,6 +12,7 @@ import { keepAwake } from '../wakelock';
 import { offerFor, repeatsOf, unfoldRepeats, type JumpOffer, type Spot } from '../repeats';
 import { navigationOf, placeOf, readJumpWords, type WordMark } from '../navigation';
 import { download } from '../backup';
+import { importOrder } from '../folder';
 import { pdfName, piecePdf } from '../pdfexport';
 import { PieceDialog } from './PieceDialog';
 import { BackupStatus } from './BackupStatus';
@@ -634,7 +635,7 @@ export function PieceView(props: { piece: Piece; allCategories: string[]; allArt
     input.value = '';
     if (!list.length) return;
     try {
-      const ids = await importFiles(list, setWorking);
+      const ids = await importFiles(importOrder(list), setWorking);
       await changeSheets([...piece.sheets, ...ids]);
     } catch (e) {
       setWorking(null);
@@ -764,6 +765,11 @@ export function PieceView(props: { piece: Piece; allCategories: string[]; allArt
           </div>
           {piece.sheets.map((id, i) => (
             <div class="row sheet" key={id}>
+              {/* a small picture with its number, to see what is where while sorting */}
+              <button class="sheet-thumb" title={`Blatt ${i + 1} zeigen`} onClick={() => pageEls.current[i]?.scrollIntoView({ block: 'start' })}>
+                {sheets[i]?.shown ? <img src={sheets[i].shown!.url} alt="" /> : <span class="muted small">…</span>}
+                <span class="sheet-number">{i + 1}</span>
+              </button>
               <span>Blatt {i + 1}{sheets[i]?.error ? ' – nicht erkannt' : ''}</span>
               <span class="spacer" />
               <IconButton iconOnly icon="up" label="Nach oben" disabled={i === 0} onClick={() => move(i, -1)} />
@@ -793,6 +799,8 @@ export function PieceView(props: { piece: Piece; allCategories: string[]; allArt
           {sheets.map((s, i) => (
             <div class="page" key={s.id} ref={(el) => (pageEls.current[i] = el)} onClick={(e) => tapPage(i, e)}
               style={s.shown ? { aspectRatio: `${s.shown.width} / ${crops[i].bottom - crops[i].top}` } : undefined}>
+              {/* while sorting the sheets: the number of each page */}
+              {sheetMenu && <span class="sheet-number page-number">{i + 1}</span>}
               {s.shown ? (
                 <div class="sheet" style={{
                   top: `${(-crops[i].top / (crops[i].bottom - crops[i].top)) * 100}%`,
