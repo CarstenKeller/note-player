@@ -1,5 +1,6 @@
-// Reading all sheets of a folder: the pictures and PDFs in it, sorted by their names as people
-// count ("Seite 2" before "Seite 10").
+// Reading all sheets of a folder: the pictures and PDFs in it, in the order they were saved
+// there (usually screenshots: their time stamp tells the order); files of the same second by
+// their names as people count ("Seite 2" before "Seite 10").
 
 const naturally = new Intl.Collator('de', { numeric: true, sensitivity: 'base' });
 
@@ -10,6 +11,16 @@ export const isSheetFile = (f: { name: string; type?: string }) =>
 /** Sorts files by their names (with paths: folder by folder) as people count. */
 export function sortedByName<T extends { name: string; webkitRelativePath?: string }>(files: T[]): T[] {
   return [...files].sort((a, b) => naturally.compare(a.webkitRelativePath || a.name, b.webkitRelativePath || b.name));
+}
+
+/**
+ * Sorts files by the time they were saved (to the second; the browser knows no other time of a
+ * file), files of the same second by their names; [byName] false: those keep their order.
+ */
+export function sortedByTime<T extends { name: string; lastModified: number; webkitRelativePath?: string }>(files: T[], byName = true): T[] {
+  return [...files].sort((a, b) =>
+    Math.floor(a.lastModified / 1000) - Math.floor(b.lastModified / 1000) ||
+    (byName ? naturally.compare(a.webkitRelativePath || a.name, b.webkitRelativePath || b.name) : 0));
 }
 
 /** Whether this browser can let the user choose a whole folder. */
@@ -44,23 +55,24 @@ export async function chooseFolder(fallback: () => void): Promise<{ name: string
     if (entry.kind !== 'file' || !entry.getFile || !isSheetFile(entry)) continue;
     files.push(await entry.getFile());
   }
-  return { name: dir.name, files: sortedByName(files) };
+  return { name: dir.name, files: sortedByTime(files) };
 }
 
 /** The sheets of a folder chosen with the file input (webkitdirectory), sorted, with its name. */
 export function folderFromInput(list: File[]): { name: string; files: File[] } {
-  const files = sortedByName(list.filter(isSheetFile));
+  const files = sortedByTime(list.filter(isSheetFile));
   const name = files[0]?.webkitRelativePath?.split('/')[0] || '';
   return { name, files };
 }
 
 /**
- * The order of chosen files: by their names when they have names of their own (files from a
- * folder in "Dateien"); photos from the photo library are all called "image.jpg" and the like:
- * they keep the order they were chosen in.
+ * The order of chosen files: by the time they were saved when the browser tells different
+ * times; within the same second (or without times) by their names when they have names of their
+ * own (files from a folder in "Dateien"), else (photos from the photo library are all called
+ * "image.jpg" and the like) in the order they were chosen.
  */
 export function importOrder(files: File[]): File[] {
   const names = files.map((f) => f.name);
   const own = new Set(names).size === names.length && !names.every((n) => /^(image|img_?\d*|photo)\b/i.test(n));
-  return own ? sortedByName(files) : files;
+  return sortedByTime(files, own);
 }
